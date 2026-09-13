@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::BuildError;
 
+/// Size of the 224 active BGR colors; retained for source compatibility.
 pub const CGP_SIZE: usize = 672;
+/// Full CGP file size observed in the original resource set.
+pub const CGP_FILE_SIZE: usize = 708;
 pub const EMBEDDED_COLOR_STRIDE: usize = 3;
 pub const PALETTE_COLOR_COUNT: usize = 256;
 pub const CGP_CUSTOM_COLOR_COUNT: usize = 224;
@@ -58,13 +61,21 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Builds a full in-game palette from external CGP bytes.
+    /// Builds 256 colors from either 672 active bytes or a complete 708-byte CGP.
+    /// The last 36 bytes of the full file do not replace the fixed suffix colors.
+    /// See docs/compatibility.md for evidence and the limits of this interpretation.
     pub fn build_from_cgp(bytes: &[u8]) -> Result<Self, BuildError> {
-        if bytes.len() != CGP_SIZE {
+        if bytes.len() < CGP_SIZE {
             return Err(BuildError::BufferTooShort {
                 context: "cgp palette",
                 needed: CGP_SIZE,
                 actual: bytes.len(),
+            });
+        }
+        if bytes.len() != CGP_SIZE && bytes.len() != CGP_FILE_SIZE {
+            return Err(BuildError::InvalidValue {
+                context: "cgp palette",
+                message: "expected 672 active bytes or a 708-byte CGP file",
             });
         }
 
@@ -75,17 +86,11 @@ impl Palette {
         }));
 
         colors.extend(
-            bytes
-                .chunks_exact(EMBEDDED_COLOR_STRIDE)
-                .enumerate()
-                .map(|(idx, chunk)| {
-                    let alpha = if idx + PALETTE_FIXED_PREFIX_COUNT == 0 {
-                        0
-                    } else {
-                        255
-                    };
-                    Srgba::new(chunk[2], chunk[1], chunk[0], alpha)
-                }),
+            bytes[..CGP_SIZE]
+                .as_chunks::<EMBEDDED_COLOR_STRIDE>()
+                .0
+                .iter()
+                .map(|chunk| Srgba::new(chunk[2], chunk[1], chunk[0], 255)),
         );
 
         colors.extend(SUFFIX_BGR.iter().map(|&(b, g, r)| Srgba::new(r, g, b, 255)));
@@ -95,7 +100,7 @@ impl Palette {
 
     /// Builds a palette directly from raw BGR palette bytes.
     pub fn build_from_bytes(bytes: &[u8]) -> Result<Self, BuildError> {
-        if bytes.len() % EMBEDDED_COLOR_STRIDE != 0 {
+        if !bytes.len().is_multiple_of(EMBEDDED_COLOR_STRIDE) {
             return Err(BuildError::InvalidValue {
                 context: "embedded palette",
                 message: "embedded palette size must be divisible by 3",
@@ -103,7 +108,9 @@ impl Palette {
         }
 
         let colors = bytes
-            .chunks_exact(EMBEDDED_COLOR_STRIDE)
+            .as_chunks::<EMBEDDED_COLOR_STRIDE>()
+            .0
+            .iter()
             .enumerate()
             .map(|(idx, chunk)| {
                 let alpha = if idx == 0 { 0 } else { 255 };
@@ -166,6 +173,77 @@ mod tests {
                 needed: CGP_SIZE,
                 actual: CGP_SIZE - 1,
             }
+        );
+    }
+
+    #[test]
+    fn empty_raw_palette_remains_empty() {
+        assert!(Palette::build_from_bytes(&[]).unwrap().colors.is_empty());
+    }
+
+    #[test]
+    fn raw_palette_transparency_depends_on_index_not_color() {
+        let palette = Palette::build_from_bytes(&[1, 2, 3, 0, 0, 0, 1, 2, 3]).unwrap();
+        assert_eq!(
+            palette.colors,
+            [
+                Srgba::new(3, 2, 1, 0),
+                Srgba::new(0, 0, 0, 255),
+                Srgba::new(3, 2, 1, 255)
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_palette_preserves_all_256_bgr_entries_without_fixed_colors() {
+        let bytes: Vec<_> = (0..=255u8)
+            .flat_map(|index| [index, index ^ 0x55, 255 - index])
+            .collect();
+        let palette = Palette::build_from_bytes(&bytes).unwrap();
+        assert_eq!(palette.colors.len(), 256);
+        for index in 0..=255u8 {
+            assert_eq!(
+                palette.colors[usize::from(index)],
+                Srgba::new(
+                    255 - index,
+                    index ^ 0x55,
+                    index,
+                    if index == 0 { 0 } else { 255 }
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_partial_bgr_triples_at_every_palette_length() {
+        for colors in 0..=256 {
+            for remainder in [1, 2] {
+                assert_eq!(
+                    Palette::build_from_bytes(&vec![0; colors * 3 + remainder]),
+                    Err(BuildError::InvalidValue {
+                        context: "embedded palette",
+                        message: "embedded palette size must be divisible by 3",
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cgp_custom_colors_cannot_override_fixed_colors() {
+        let black = Palette::build_from_cgp(&[0; CGP_SIZE]).unwrap();
+        let white = Palette::build_from_cgp(&[255; CGP_SIZE]).unwrap();
+        assert_eq!(black.colors[..16], white.colors[..16]);
+        assert_eq!(black.colors[240..], white.colors[240..]);
+        assert!(
+            black.colors[16..240]
+                .iter()
+                .all(|color| *color == Srgba::new(0, 0, 0, 255))
+        );
+        assert!(
+            white.colors[16..240]
+                .iter()
+                .all(|color| *color == Srgba::new(255, 255, 255, 255))
         );
     }
 }

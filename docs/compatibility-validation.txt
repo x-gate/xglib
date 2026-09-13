@@ -1,0 +1,39 @@
+manifest_sha256=a4e58343a50c4603cdd6c535839844fa6e78d78aa5844a6032829d39cbe077d8
+anime.actions=311365
+anime.frames=2413106
+anime.leading_unindexed_bytes=0
+anime.ok=3186
+anime.records=3186
+anime.standard_headers=311365
+anime.unique_graphic_refs=233458
+anime.unique_refs_missing_in_graphic_66=0
+graphic.decoded_pixels=1509709716
+graphic.external_palette=252823
+graphic.legacy_raw_palette_index_risk=212300
+graphic.lenient_only=188
+graphic.records=252824
+graphic.strict_mismatch.version_1.delta_1=188
+graphic.strict_ok=252635
+graphic.unindexed_bytes=0
+graphic.v0_delta_if_12_byte_header.4=340
+graphic.version.0=340
+graphic.version.1=252484
+map.cells=5219473
+map.files=605
+map.nonzero_tiles_without_graphic_66_map_id=292402
+map.ok=605
+map.skipped_files=1
+palette.cgp_ok=35
+palette.files=35
+palette.raw_colors.236=35
+palette.size.708=35
+rle.roundtrip_samples=246
+rle.scalar_simd_checked=252483
+ERROR graphic.lenient: count=1; first=16681: InvalidValue { context: "graphic dimensions", message: "graphic height must be non-negative" }
+ERROR graphic.strict: count=189; first=row=8725, id=8725: InvalidValue { context: "graphic payload", message: "decoded payload length does not match graphic dimensions" }
+WARN anime.duplicate_id: count=2380; first=100000: "duplicate; all source rows retained"
+WARN graphic.duplicate_id: count=36; first=250968: 19230
+WARN graphic.header_length_vs_info: count=340; first=7476: (8617560, 468)
+audit_complete=true
+inputs_unchanged=true
+audit_exit_code=1
