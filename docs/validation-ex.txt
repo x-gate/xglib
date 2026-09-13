@@ -1,0 +1,41 @@
+manifest_sha256=e98ec8a6f4193698b774dee4067ed1e257065b64de3af55c5a7ba385bc5fbe51
+resource.graphic_info=GraphicInfoEx_5.bin
+resource.graphic=GraphicEx_5.bin
+resource.anime_info=AnimeInfoEx_1.Bin
+resource.anime=AnimeEx_1.Bin
+anime.actions=119397
+anime.frames=865555
+anime.leading_unindexed_bytes=0
+anime.ok=827
+anime.records=827
+anime.standard_headers=119397
+anime.unique_graphic_refs=333779
+anime.unique_refs_missing_in_selected_graphics=0
+graphic.decoded_pixels=2177879992
+graphic.external_palette=343875
+graphic.legacy_raw_palette_index_risk=333139
+graphic.lenient_only=102
+graphic.records=343875
+graphic.strict_mismatch.version_1.delta_1=102
+graphic.strict_ok=343773
+graphic.unindexed_bytes=0
+graphic.v0_delta_if_12_byte_header.4=77
+graphic.version.0=77
+graphic.version.1=343798
+map.cells=5219473
+map.files=605
+map.nonzero_tiles_without_selected_map_id=2504942
+map.ok=605
+map.skipped_files=1
+palette.cgp_ok=35
+palette.files=35
+palette.raw_colors.236=35
+palette.size.708=35
+rle.roundtrip_samples=336
+rle.scalar_simd_checked=343798
+ERROR graphic.strict: count=102; first=row=3462, id=3462: InvalidValue { context: "graphic payload", message: "decoded payload length does not match graphic dimensions" }
+WARN graphic.duplicate_id: count=6; first=343831: 5492
+WARN graphic.header_length_vs_info: count=77; first=7063: (47427224, 307216)
+audit_complete=true
+inputs_unchanged=true
+audit_exit_code=1

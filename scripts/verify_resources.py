@@ -1,15 +1,20 @@
 """Hash read-only inputs before/after the Rust audit; emit metadata only to stdout."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import subprocess
 import sys
 
 
-def inventory(root):
-    paths = [root / "bin" / name for name in (
-        "GraphicInfo_66.bin", "Graphic_66.bin", "AnimeInfo_4.bin", "Anime_4.bin"
-    )]
+RESOURCE_SETS = {
+    "base": ("GraphicInfo_66.bin", "Graphic_66.bin", "AnimeInfo_4.bin", "Anime_4.bin"),
+    "ex": ("GraphicInfoEx_5.bin", "GraphicEx_5.bin", "AnimeInfoEx_1.Bin", "AnimeEx_1.Bin"),
+}
+
+
+def inventory(root, names):
+    paths = [root / "bin" / name for name in names]
     for directory in (root / "bin/pal", root / "map"):
         for path in sorted(directory.rglob("*")):
             if path.is_symlink():
@@ -30,20 +35,23 @@ def inventory(root):
 
 
 def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: python3 scripts/verify_resources.py <Assets directory>")
-    root = Path(sys.argv[1]).resolve(strict=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("assets", type=Path)
+    parser.add_argument("--set", choices=RESOURCE_SETS, default="base", dest="resource_set")
+    args = parser.parse_args()
+    root = args.assets.resolve(strict=True)
+    names = RESOURCE_SETS[args.resource_set]
     repo = Path(__file__).resolve().parents[1]
-    before = inventory(root)
+    before = inventory(root, names)
     for entry in before:
         print(json.dumps(entry, ensure_ascii=False), flush=True)
     manifest = json.dumps(before, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     print("manifest_sha256=" + hashlib.sha256(manifest.encode()).hexdigest(), flush=True)
     completed = subprocess.run([
         "cargo", "run", "--locked", "--offline", "--release", "--example",
-        "verify_resources", "--", str(root)
+        "verify_resources", "--", str(root), *names
     ], cwd=repo, check=False)
-    unchanged = before == inventory(root)
+    unchanged = before == inventory(root, names)
     print(f"inputs_unchanged={str(unchanged).lower()}", flush=True)
     print(f"audit_exit_code={completed.returncode}", flush=True)
     return completed.returncode if unchanged else 2

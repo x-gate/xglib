@@ -48,10 +48,10 @@
 5. strict 模式要求像素長度等於 `info.width * info.height`；一般模式多則截尾、少則以 0 補滿。
 6. `*_build_from_bytes` 保留原始 BGR 契約。新增 `build_from_cgp` / `strict_build_from_cgp` 在 version < 2 呼叫 `Palette::build_from_cgp`；version ≥ 2 在所有入口皆使用內嵌原始 BGR 色表。CGP 圖像入口額外檢查像素索引不超出色表，其他行為相同。
 
-| version | 現有實作的解讀 | 本次真實樣本 |
+| version | 現有實作的解讀 | base / Ex 真實樣本 |
 | --- | --- | --- |
-| 0 | 不壓縮、外部原始色表 | 340 筆 |
-| 1 | RLE、外部原始色表 | 252,484 筆 |
+| 0 | 不壓縮、外部原始色表 | 340 / 77 筆 |
+| 1 | RLE、外部原始色表 | 252,484 / 343,798 筆 |
 | 2 | 不壓縮、內嵌色表 | 無 |
 | 3 | RLE、內嵌色表 | 無；有合成測試 |
 | 4–255 | 仍依上述比較與 bit 0 規則處理 | 無；沒有版本白名單 |
@@ -167,3 +167,7 @@
 encoder 單一命令上限 `0x0F_FFFF`，更長的 run 分段。長度 ≤ 15 用短格式、≤ 4095 用中格式，其餘長格式。啟發式選擇至少連續 3 個零才使用 zero-run、至少連續 4 個相同 byte 才使用 repeat，否則累積 literal。這不保證最短編碼，也不保證與原檔壓縮 bytes 完全相同；round-trip 驗證比較的是解碼後資料。
 
 一般入口使用 scalar。顯式 `*_simd` 在 aarch64 使用 NEON、x86_64 使用 SSE2，其餘架構有 fallback；WASM 沒有專用 SIMD 分支。本次只在 Apple ARM64 執行，未量測效能，也未驗證 x86_64 執行結果。
+
+## Ex 樣本覆蓋補充
+
+`GraphicInfoEx_5` / `GraphicEx_5` 的 343,875 筆沿用同一圖像布局，無 version ≥ 2。`AnimeInfoEx_1.Bin` / `AnimeEx_1.Bin` 的 827 筆皆可依 12-byte 索引及標準動畫 header 完整解析；沒有延伸 header 的真實樣本證據。檔名中的 Ex 不等於解析器的 Extended header。102 筆圖像在 strict 模式有多 1 byte 的異常，詳見 [Ex 驗證報告](validation-ex.md)。

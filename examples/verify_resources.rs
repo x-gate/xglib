@@ -57,8 +57,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.next()
             .ok_or("usage: verify_resources <Assets directory>")?,
     );
-    if args.next().is_some() {
-        return Err("expected exactly one Assets directory".into());
+    let names: Vec<_> = args.collect();
+    let defaults = [
+        "GraphicInfo_66.bin",
+        "Graphic_66.bin",
+        "AnimeInfo_4.bin",
+        "Anime_4.bin",
+    ]
+    .map(std::ffi::OsString::from);
+    let names = if names.is_empty() {
+        &defaults[..]
+    } else {
+        &names[..]
+    };
+    if names.len() != 4
+        || names.iter().any(|name| {
+            let path = Path::new(name);
+            path.components().count() != 1 || path.file_name() != Some(name.as_os_str())
+        })
+    {
+        return Err("expected Assets directory and optionally four plain filenames: GraphicInfo Graphic AnimeInfo Anime".into());
+    }
+    for (kind, name) in ["graphic_info", "graphic", "anime_info", "anime"]
+        .iter()
+        .zip(names)
+    {
+        println!("resource.{kind}={}", name.to_string_lossy());
     }
     let mut report = Report::default();
     let cgp = fs::read(root.join("bin/pal/palet_00.cgp"))?;
@@ -80,8 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let info = fs::read(root.join("bin/GraphicInfo_66.bin"))?;
-    let data = fs::read(root.join("bin/Graphic_66.bin"))?;
+    let info = fs::read(root.join("bin").join(&names[0]))?;
+    let data = fs::read(root.join("bin").join(&names[1]))?;
     if !info.len().is_multiple_of(xglib::GRAPHIC_INFO_SIZE) {
         return Err("graphic index has trailing bytes".into());
     }
@@ -231,8 +255,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     report.add("graphic.unindexed_bytes", data.len() - covered);
     drop(data);
 
-    let info = fs::read(root.join("bin/AnimeInfo_4.bin"))?;
-    let data = fs::read(root.join("bin/Anime_4.bin"))?;
+    let info = fs::read(root.join("bin").join(&names[2]))?;
+    let data = fs::read(root.join("bin").join(&names[3]))?;
     if !info.len().is_multiple_of(xglib::ANIME_INFO_SIZE) {
         return Err("anime index has trailing bytes".into());
     }
@@ -291,7 +315,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         referenced.insert(graphic_id);
                         report.add("anime.frames", 1);
                         if !ids.contains(&graphic_id) {
-                            report.add("anime.frames_missing_in_graphic_66", 1);
+                            report.add("anime.frames_missing_in_selected_graphics", 1);
                         }
                     }
                 }
@@ -301,7 +325,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     report.add("anime.unique_graphic_refs", referenced.len());
     report.add(
-        "anime.unique_refs_missing_in_graphic_66",
+        "anime.unique_refs_missing_in_selected_graphics",
         referenced.difference(&ids).count(),
     );
 
@@ -318,7 +342,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report.add("map.cells", map.ground.len());
                 for value in map.ground.iter().chain(&map.object) {
                     if *value != 0 && !map_ids.contains(&i32::from(*value)) {
-                        report.add("map.nonzero_tiles_without_graphic_66_map_id", 1);
+                        report.add("map.nonzero_tiles_without_selected_map_id", 1);
                     }
                 }
             }

@@ -16,7 +16,7 @@
 | `src/wasm.rs` | bytes 參數 → Rust 解析 → Serde → `JsValue` |
 | `xglib.d.ts` | 手寫 TypeScript 介面，不是已發布套件或載入器 |
 | `examples/verify_resources.rs` | 選用的本機唯讀資源掃描器 |
-| `scripts/verify_resources.py` | 檔案指紋清單與驗證前後完整性比較 |
+| `scripts/verify_resources.py` | base / ex 資源集選擇、檔案指紋與驗證前後完整性比較 |
 
 函式庫不做檔案尋址、檔名配對、ID 解決、圖片輸出、座標轉換或播放。呼叫端依序完成：讀索引 → 切單筆 bytes → 呼叫解析 → 解決 ID / 色表 → 自行呈現。
 
@@ -99,3 +99,11 @@ wasm-bindgen target/wasm32-unknown-unknown/release/xglib.wasm --target web --out
 `BuildError` 包含 `BufferTooShort`、`InvalidMagic`、`InvalidValue`、`Unsupported`、`TrailingBytes`、`Rle`；`Unsupported` 目前沒有使用的解析分支。錯誤有 context，但缺少檔名與整體索引列位置，應由上層補上。`BuildError` / `RleError` 尚未實作 `Display` 或 `std::error::Error`，範例因此使用 `format!("{e:?}")`。
 
 原有 raw BGR `strict` 只加強像素長度檢查。新增的 CGP 圖像入口也驗證 palette index；所有入口均未全面檢查 metadata、版本白名單或圖像/動畫 ID 關係。RLE 沒有解壓輸出上限；動畫依 frame count 預先配置，Map 的最後 `20 + layer_size * 3` 也不是完整 checked arithmetic。將此 library 用於不受信任資料前，需要另外強化資源上限與所有整數運算。本次是特定本機資料的相容性研究，未進行 fuzzing 或任意輸入安全性驗證。
+
+## 驗證工具的資源集
+
+Python 入口支援 `--set base`（預設）與 `--set ex`，四個檔名只由 `RESOURCE_SETS` 選定，再同時用於檔案雜湊與 Rust 執行參數。共享調色盤與地圖仍取自同一 Assets。未另外載入或合併另一組圖像索引。
+
+Rust 範例維持單一 Assets 參數的 base 預設行為；亦可指定四個 bin 目錄下的純檔名，順序為 GraphicInfo、Graphic、AnimeInfo、Anime。路徑或不完整參數組會拒絕。輸出 `resource.graphic_info`、`resource.graphic`、`resource.anime_info`、`resource.anime` 供核對。
+
+引用統計現改為 `anime.frames_missing_in_selected_graphics`、`anime.unique_refs_missing_in_selected_graphics`、`map.nonzero_tiles_without_selected_map_id`，取代先前硬編碼的 `graphic_66` 字樣。舊驗證報告保留舊名稱；消費診斷文字的腳本須同步調整。這不是函式庫 API 或二進位格式變更。

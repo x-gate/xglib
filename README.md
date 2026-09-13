@@ -12,6 +12,8 @@
 | --- | --- |
 | `GraphicInfo_66.bin` / `Graphic_66.bin` | 252,824 筆；252,635 筆通過嚴格像素長度檢查，188 筆多解出 1 byte，1 筆負高度無法解析 |
 | `AnimeInfo_4.bin` / `Anime_4.bin` | 3,186 筆全部解析成功，2,413,106 個 frame 的圖像 ID 都存在於指定圖像索引 |
+| `GraphicInfoEx_5.bin` / `GraphicEx_5.bin` | 343,875 筆一般模式全部成功；343,773 筆通過 strict，102 筆多解出 1 byte |
+| `AnimeInfoEx_1.Bin` / `AnimeEx_1.Bin` | 827 筆全部成功；865,555 個 frame 的圖像 ID 都存在於 Ex 圖像索引 |
 | `pal/*.cgp` | 35 個 708-byte CGP 全部載入成功；以明確 CGP 圖像入口解析後，色彩索引越界為 0 |
 | `map/**/*.dat` | 605 個全部解析成功，共 5,219,473 格；地圖圖塊與完整素材對應仍未驗證 |
 
@@ -35,7 +37,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo doc --locked --no-deps
 ```
 
-已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 34 個單元測試與 8 個相容性回歸測試通過，rustfmt、嚴格 Clippy 與文件建置也通過。WASM target 已編譯成功；尚未執行 JS runtime 測試。
+已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 34 個單元測試、8 個相容性回歸測試與 5 個 Python 驗證工具測試通過，rustfmt、嚴格 Clippy 與文件建置也通過。WASM target 已編譯成功；尚未執行 JS runtime 測試。
 
 其他 Rust repository 可使用 path dependency；路徑相對於該 repository 的 `Cargo.toml`：
 
@@ -72,17 +74,21 @@ assert_eq!(palette.colors[1].red, 0x30);
 ```sh
 cargo build --locked --offline --release --example verify_resources
 python3 scripts/verify_resources.py ../CGoriginmood/Assets > target/resource-audit.txt
+# Ex：保留檔名大小寫，沿用同一 Assets 下的 pal 與 map。
+python3 scripts/verify_resources.py ../CGoriginmood/Assets --set ex > target/resource-audit-ex.txt
+python3 -B -m unittest discover -s tests -p 'test_*.py'
 ```
 
-腳本只讀取指定四個 `.bin`、`bin/pal` 與 `map`；不啟動遊戲、不輸出解碼素材。它會列出檔案大小與 SHA-256，呼叫 Rust 範例，再次比對輸入清單、大小與雜湊。日誌寫在已忽略的 `target/`。目前樣本預期回傳 **exit 1**，日誌末端包含 `audit_complete=true`、`inputs_unchanged=true`，代表掃描完成但仍有 188 筆像素長度不符與 1 筆負高度；不會將剩餘問題隱藏成成功。
+`--set base`（預設）選原始 66/4 組，`--set ex` 選 Ex_5/Ex_1 組。腳本只讀取選定四個 binary、`bin/pal` 與 `map`；不啟動遊戲、不輸出解碼素材。它會列出檔案大小與 SHA-256，呼叫 Rust 範例，再次比對輸入清單、大小與雜湊。日誌寫在已忽略的 `target/`。兩組樣本目前都預期回傳 **exit 1**，日誌末端包含 `audit_complete=true`、`inputs_unchanged=true`，代表掃描完成但仍有 strict 失敗：base 為 188 筆像素長度不符與 1 筆負高度，Ex 為 102 筆像素長度不符；一般模式的成功數另行統計，不會將兩者混為全部通過。
 
-資料是選用的本機研究輸入，不隨 repository 提供；一般單元測試完全不依賴它。完整掃描一次載入約 637 MB 的圖像檔，另有索引、解碼與執行時記憶體需求。不要將輸出重導至 `CGoriginmood/`。
+資料是選用的本機研究輸入，不隨 repository 提供；一般單元測試完全不依賴它。完整掃描一次載入圖像檔（base 約 637 MB、Ex 約 942 MB），另有索引、解碼與執行時記憶體需求。不要將輸出重導至 `CGoriginmood/`。
 
 ## 文件導覽
 
 - [AGENTS.md](AGENTS.md)：此 repository 的修改、驗證與素材處理規則。
 - [API 與架構](docs/architecture-api.md)：模組責任、Rust / WASM 介面、錯誤與整合方式。
 - [二進位格式與 RLE](docs/formats.md)：欄位 offset、解碼流程、推論邊界。
+- [Ex 資源驗證](docs/validation-ex.md)：Ex 全量結果、異常分析與資源集選擇。
 - [相容性修復報告](docs/compatibility.md)：修復依據、API 遷移方式、前後對照與剩餘問題。
 - [2026-09-13 驗證報告](docs/validation-2026-09-13.md)：樣本指紋、方法、成功範圍與已知問題。
 
