@@ -135,8 +135,10 @@ fn parse_map_header(bytes: &[u8]) -> Result<MapHeader, BuildError> {
 
 fn parse_u16_layer(bytes: &[u8]) -> Vec<u16> {
     bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes(chunk.try_into().unwrap()))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16::from_le_bytes(*chunk))
         .collect()
 }
 

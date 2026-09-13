@@ -37,20 +37,20 @@ fn decode_impl(input: &[u8], use_simd: bool) -> Result<Vec<u8>, RleError> {
         let low = usize::from(flag & 0x0f);
 
         match op {
-            0x0 | 0x1 | 0x2 => {
+            0x0..=0x2 => {
                 let len = decode_len(op, low, input, &mut cursor, flag_pos)?;
                 ensure_remaining(input, cursor, len, flag_pos)?;
                 append_raw(&mut output, &input[cursor..cursor + len], use_simd);
                 cursor += len;
             }
-            0x8 | 0x9 | 0xa => {
+            0x8..=0xa => {
                 ensure_remaining(input, cursor, 1, flag_pos)?;
                 let value = input[cursor];
                 cursor += 1;
                 let len = decode_len(op, low, input, &mut cursor, flag_pos)?;
                 append_repeat(&mut output, value, len, use_simd);
             }
-            0xc | 0xd | 0xe => {
+            0xc..=0xe => {
                 let len = decode_len(op, low, input, &mut cursor, flag_pos)?;
                 append_zero(&mut output, len, use_simd);
             }
@@ -321,12 +321,12 @@ unsafe fn append_repeat_simd(output: &mut Vec<u8>, value: u8, len: usize) {
 fn simd_run_len(input: &[u8], start: usize, zero_only: bool) -> usize {
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { neon_run_len(input, start, zero_only) };
+        unsafe { neon_run_len(input, start, zero_only) }
     }
 
     #[cfg(target_arch = "x86_64")]
     {
-        return unsafe { sse2_run_len(input, start, zero_only) };
+        unsafe { sse2_run_len(input, start, zero_only) }
     }
 
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
@@ -608,13 +608,10 @@ mod tests {
                 "read 74291 bytes",
                 {
                     let mut encoded = vec![0x21, 0x22, 0x33];
-                    encoded.extend(std::iter::repeat_n(
-                        0xaa,
-                        0x01 * 0x10000 + 0x22 * 0x100 + 0x33,
-                    ));
+                    encoded.extend(std::iter::repeat_n(0xaa, 0x10000 + 0x22 * 0x100 + 0x33));
                     encoded
                 },
-                vec![0xaa; 0x01 * 0x10000 + 0x22 * 0x100 + 0x33],
+                vec![0xaa; 0x10000 + 0x22 * 0x100 + 0x33],
             ),
             ("repeat 1 byte 2 times", vec![0x82, 0xaa], vec![0xaa, 0xaa]),
             (
@@ -625,7 +622,7 @@ mod tests {
             (
                 "repeat 1 byte 74291 times",
                 vec![0xa1, 0xaa, 0x22, 0x33],
-                vec![0xaa; 0x01 * 0x10000 + 0x22 * 0x100 + 0x33],
+                vec![0xaa; 0x10000 + 0x22 * 0x100 + 0x33],
             ),
             ("repeat 1 alpha byte", vec![0xc1], vec![0x00]),
             (
@@ -636,7 +633,7 @@ mod tests {
             (
                 "repeat 74291 alpha bytes",
                 vec![0xe1, 0x22, 0x33],
-                vec![0x00; 0x01 * 0x10000 + 0x22 * 0x100 + 0x33],
+                vec![0x00; 0x10000 + 0x22 * 0x100 + 0x33],
             ),
         ];
 
