@@ -175,4 +175,75 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn empty_raw_palette_remains_empty() {
+        assert!(Palette::build_from_bytes(&[]).unwrap().colors.is_empty());
+    }
+
+    #[test]
+    fn raw_palette_transparency_depends_on_index_not_color() {
+        let palette = Palette::build_from_bytes(&[1, 2, 3, 0, 0, 0, 1, 2, 3]).unwrap();
+        assert_eq!(
+            palette.colors,
+            [
+                Srgba::new(3, 2, 1, 0),
+                Srgba::new(0, 0, 0, 255),
+                Srgba::new(3, 2, 1, 255)
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_palette_preserves_all_256_bgr_entries_without_fixed_colors() {
+        let bytes: Vec<_> = (0..=255u8)
+            .flat_map(|index| [index, index ^ 0x55, 255 - index])
+            .collect();
+        let palette = Palette::build_from_bytes(&bytes).unwrap();
+        assert_eq!(palette.colors.len(), 256);
+        for index in 0..=255u8 {
+            assert_eq!(
+                palette.colors[usize::from(index)],
+                Srgba::new(
+                    255 - index,
+                    index ^ 0x55,
+                    index,
+                    if index == 0 { 0 } else { 255 }
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_partial_bgr_triples_at_every_palette_length() {
+        for colors in 0..=256 {
+            for remainder in [1, 2] {
+                assert_eq!(
+                    Palette::build_from_bytes(&vec![0; colors * 3 + remainder]),
+                    Err(BuildError::InvalidValue {
+                        context: "embedded palette",
+                        message: "embedded palette size must be divisible by 3",
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cgp_custom_colors_cannot_override_fixed_colors() {
+        let black = Palette::build_from_cgp(&[0; CGP_SIZE]).unwrap();
+        let white = Palette::build_from_cgp(&[255; CGP_SIZE]).unwrap();
+        assert_eq!(black.colors[..16], white.colors[..16]);
+        assert_eq!(black.colors[240..], white.colors[240..]);
+        assert!(
+            black.colors[16..240]
+                .iter()
+                .all(|color| *color == Srgba::new(0, 0, 0, 255))
+        );
+        assert!(
+            white.colors[16..240]
+                .iter()
+                .all(|color| *color == Srgba::new(255, 255, 255, 255))
+        );
+    }
 }

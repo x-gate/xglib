@@ -643,4 +643,191 @@ mod tests {
             }
         );
     }
+
+    fn info_bytes(width: i32, height: i32) -> [u8; GRAPHIC_INFO_SIZE] {
+        let mut bytes = [0; GRAPHIC_INFO_SIZE];
+        bytes[20..24].copy_from_slice(&width.to_le_bytes());
+        bytes[24..28].copy_from_slice(&height.to_le_bytes());
+        bytes
+    }
+
+    fn record_bytes(version: u8, payload: &[u8], palette_size: u32) -> Vec<u8> {
+        let mut bytes = GRAPHIC_MAGIC.to_vec();
+        bytes.extend_from_slice(&[version, 0xab]);
+        bytes.extend_from_slice(&2i32.to_le_bytes());
+        bytes.extend_from_slice(&1i32.to_le_bytes());
+        bytes.extend_from_slice(&0i32.to_le_bytes());
+        if version >= 2 {
+            bytes.extend_from_slice(&palette_size.to_le_bytes());
+        }
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn rejects_every_short_info_record_and_header() {
+        let info = info_bytes(2, 1);
+        let bytes = record_bytes(0, &[0, 1], 0);
+        for len in 0..GRAPHIC_INFO_SIZE {
+            let error = BuildError::BufferTooShort {
+                context: "graphic info",
+                needed: GRAPHIC_INFO_SIZE,
+                actual: len,
+            };
+            assert_eq!(
+                GraphicInfo::build_from_bytes(&info[..len]),
+                Err(error.clone())
+            );
+            assert_eq!(
+                Graphic::build_from_bytes(&info[..len], &bytes, &[]),
+                Err(error)
+            );
+        }
+        for len in 0..GRAPHIC_HEADER_SIZE {
+            assert_eq!(
+                Graphic::build_from_bytes(&info, &bytes[..len], &[]),
+                Err(BuildError::BufferTooShort {
+                    context: "graphic header",
+                    needed: GRAPHIC_HEADER_SIZE,
+                    actual: len,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_magic_before_decoding_payload() {
+        let mut bytes = record_bytes(1, &[0xff], 0);
+        bytes[..2].copy_from_slice(b"DR");
+        assert_eq!(
+            Graphic::build_from_bytes(&info_bytes(2, 1), &bytes, &[]),
+            Err(BuildError::InvalidMagic {
+                context: "graphic header",
+                expected: b"RD".to_vec(),
+                actual: b"DR".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_extended_palette_size() {
+        for version in [2, 3] {
+            let bytes = record_bytes(version, &[], 0);
+            for len in 16..20 {
+                assert_eq!(
+                    Graphic::build_from_bytes(&info_bytes(0, 0), &bytes[..len], &[]),
+                    Err(BuildError::BufferTooShort {
+                        context: "graphic extended palette size",
+                        needed: 20,
+                        actual: len,
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_embedded_palette_larger_than_decoded_payload() {
+        for (version, payload) in [(2, vec![0, 1]), (3, vec![0x02, 0, 1])] {
+            let bytes = record_bytes(version, &payload, 3);
+            assert_eq!(
+                Graphic::build_from_bytes(&info_bytes(2, 1), &bytes, &[]),
+                Err(BuildError::InvalidValue {
+                    context: "graphic extended payload",
+                    message: "embedded palette size exceeds decoded payload length",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn propagates_rle_errors_in_both_pixel_length_modes() {
+        for version in [1, 3] {
+            let bytes = record_bytes(version, &[0xc2, 0x90, 0x55], 0);
+            let error = BuildError::Rle(crate::rle::RleError::UnexpectedEof {
+                position: 1,
+                needed: 1,
+                remaining: 0,
+            });
+            let info = info_bytes(2, 1);
+            assert_eq!(
+                Graphic::build_from_bytes(&info, &bytes, &[]),
+                Err(error.clone())
+            );
+            assert_eq!(
+                Graphic::strict_build_from_bytes(&info, &bytes, &[]),
+                Err(error)
+            );
+        }
+    }
+
+    #[test]
+    fn propagates_incomplete_bgr_palette_errors() {
+        for version in 0..=3 {
+            let decoded = if version < 2 {
+                vec![0, 1]
+            } else {
+                vec![0, 1, 0xab, 0xcd]
+            };
+            let payload = if version & 1 == 1 {
+                rle_encode(&decoded)
+            } else {
+                decoded
+            };
+            let bytes = record_bytes(version, &payload, 2);
+            assert_eq!(
+                Graphic::strict_build_from_bytes(&info_bytes(2, 1), &bytes, &[0xab, 0xcd]),
+                Err(BuildError::InvalidValue {
+                    context: "embedded palette",
+                    message: "embedded palette size must be divisible by 3",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_only_pixels_preserving_embedded_palette() {
+        let palette = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
+        for version in [2, 3] {
+            for pixels in [&[1][..], &[1, 0, 1][..]] {
+                let decoded = [pixels, &palette].concat();
+                let payload = if version == 3 {
+                    rle_encode(&decoded)
+                } else {
+                    decoded
+                };
+                let bytes = record_bytes(version, &payload, 6);
+                let info = info_bytes(2, 1);
+                let graphic = Graphic::build_from_bytes(&info, &bytes, &[]).unwrap();
+                assert_eq!(graphic.payload, [1, 0]);
+                assert_eq!(
+                    graphic.palette,
+                    Palette::build_from_bytes(&palette).unwrap()
+                );
+                assert_eq!(
+                    Graphic::strict_build_from_bytes(&info, &bytes, &[]),
+                    Err(BuildError::InvalidValue {
+                        context: "graphic payload",
+                        message: "decoded payload length does not match graphic dimensions",
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_area_graphics_accept_empty_pixels_in_all_versions() {
+        for version in 0..=3 {
+            for (width, height) in [(0, 0), (0, 2), (2, 0)] {
+                let graphic = Graphic::strict_build_from_bytes(
+                    &info_bytes(width, height),
+                    &record_bytes(version, &[], 0),
+                    &[],
+                )
+                .unwrap();
+                assert!(graphic.payload.is_empty());
+                assert!(graphic.palette.colors.is_empty());
+            }
+        }
+    }
 }

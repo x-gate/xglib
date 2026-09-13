@@ -37,7 +37,9 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo doc --locked --no-deps
 ```
 
-已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 34 個單元測試、8 個相容性回歸測試與 5 個 Python 驗證工具測試通過，rustfmt、嚴格 Clippy 與文件建置也通過。WASM target 已編譯成功；尚未執行 JS runtime 測試。
+已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 66 個單元測試、8 個相容性回歸測試與 5 個 Python 驗證工具測試通過，rustfmt、嚴格 Clippy 與文件建置也通過。WASM target 已編譯成功；尚未執行 JS runtime 測試。
+
+單元測試使用合成 bytes，涵蓋動畫與圖像截斷、signed 欄位、內嵌色表與像素長度模式、地圖平面順序與尺寸溢位、BGR 色序與透明度，以及 RLE 指令長度邊界、錯誤位置和 scalar / SIMD 對照。可用 `cargo test --locked --offline types::anime`（或 `types::graphic`、`types::map`、`types::palette`、`rle::tests`）單獨執行指定模組。
 
 其他 Rust repository 可使用 path dependency；路徑相對於該 repository 的 `Cargo.toml`：
 

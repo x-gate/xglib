@@ -98,7 +98,9 @@ wasm-bindgen target/wasm32-unknown-unknown/release/xglib.wasm --target web --out
 
 `BuildError` 包含 `BufferTooShort`、`InvalidMagic`、`InvalidValue`、`Unsupported`、`TrailingBytes`、`Rle`；`Unsupported` 目前沒有使用的解析分支。錯誤有 context，但缺少檔名與整體索引列位置，應由上層補上。`BuildError` / `RleError` 尚未實作 `Display` 或 `std::error::Error`，範例因此使用 `format!("{e:?}")`。
 
-原有 raw BGR `strict` 只加強像素長度檢查。新增的 CGP 圖像入口也驗證 palette index；所有入口均未全面檢查 metadata、版本白名單或圖像/動畫 ID 關係。RLE 沒有解壓輸出上限；動畫依 frame count 預先配置，Map 的最後 `20 + layer_size * 3` 也不是完整 checked arithmetic。將此 library 用於不受信任資料前，需要另外強化資源上限與所有整數運算。本次是特定本機資料的相容性研究，未進行 fuzzing 或任意輸入安全性驗證。
+原有 raw BGR `strict` 只加強像素長度檢查。新增的 CGP 圖像入口也驗證 palette index；所有入口均未全面檢查 metadata、版本白名單或圖像/動畫 ID 關係。RLE 沒有解壓輸出上限；動畫依 frame count 預先配置。將此 library 用於不受信任資料前，需要另外強化資源上限與檢查其餘整數運算。本次是特定本機資料的相容性研究，未進行 fuzzing 或任意輸入安全性驗證。
+
+2026-09-13 補測時，合成的超大地圖尺寸重現了 `20 + layer_size * 3` 的整數溢位 panic。Map 現在對三個平面總長度的乘法及 header 加法都使用 checked arithmetic；溢位回傳 `BuildError::InvalidValue { context: "map header", message: "map total size overflow" }`。有效地圖的解析方式不變；此修正不等於新增記憶體配置上限。
 
 ## 驗證工具的資源集
 

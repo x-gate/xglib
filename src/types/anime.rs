@@ -493,4 +493,176 @@ mod tests {
             }
         );
     }
+
+    fn info_bytes(action_count: i16) -> Vec<u8> {
+        let mut bytes = (-123i32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&(-456i32).to_le_bytes());
+        bytes.extend_from_slice(&action_count.to_le_bytes());
+        bytes.extend_from_slice(&[0xab, 0xcd]);
+        bytes
+    }
+
+    fn action_bytes(extended: bool, frame_count: i32) -> Vec<u8> {
+        let mut bytes = (-2i16).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&(-3i16).to_le_bytes());
+        bytes.extend_from_slice(&(-100i32).to_le_bytes());
+        bytes.extend_from_slice(&frame_count.to_le_bytes());
+        if extended {
+            bytes.extend_from_slice(&[0xab, 0xcd]);
+            bytes.extend_from_slice(&(-2i16).to_le_bytes());
+            bytes.extend_from_slice(&(-1i32).to_le_bytes());
+        }
+        for _ in 0..frame_count.max(0) {
+            bytes.extend_from_slice(&(-42i32).to_le_bytes());
+            bytes.extend_from_slice(&i16::MIN.to_le_bytes());
+            bytes.extend_from_slice(&i16::MAX.to_le_bytes());
+            bytes.extend_from_slice(&(-4i16).to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn rejects_every_short_info_record() {
+        let info = info_bytes(0);
+        for len in 0..ANIME_INFO_SIZE {
+            let error = BuildError::BufferTooShort {
+                context: "anime info",
+                needed: ANIME_INFO_SIZE,
+                actual: len,
+            };
+            assert_eq!(
+                AnimeInfo::build_from_bytes(&info[..len]),
+                Err(error.clone())
+            );
+            assert_eq!(Anime::build_from_bytes(&info[..len], &[]), Err(error));
+        }
+    }
+
+    #[test]
+    fn preserves_signed_fields_padding_and_extended_metadata() {
+        for extended in [false, true] {
+            let anime =
+                Anime::build_from_bytes(&info_bytes(1), &action_bytes(extended, 1)).unwrap();
+            assert_eq!(
+                anime.info,
+                AnimeInfo {
+                    id: -123,
+                    addr: -456,
+                    act_cnt: 1,
+                    padding: [0xab, 0xcd]
+                }
+            );
+            let expected = if extended {
+                AnimeHeader::Extended(AnimeHeaderExtended {
+                    direct: -2,
+                    action: -3,
+                    duration: -100,
+                    frame_cnt: 1,
+                    reserved: [0xab, 0xcd],
+                    reversed: -2,
+                    sentinel: -1,
+                })
+            } else {
+                AnimeHeader::Standard(AnimeHeaderStandard {
+                    direct: -2,
+                    action: -3,
+                    duration: -100,
+                    frame_cnt: 1,
+                })
+            };
+            assert_eq!(anime.actions[0].header, expected);
+            assert_eq!(
+                anime.actions[0].frames,
+                [AnimeFrame {
+                    graphic_id: -42,
+                    off_x: i16::MIN,
+                    off_y: i16::MAX,
+                    flag: -4
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_negative_action_and_frame_counts() {
+        assert_eq!(
+            Anime::build_from_bytes(&info_bytes(-1), &[]),
+            Err(BuildError::InvalidValue {
+                context: "anime info",
+                message: "negative action count",
+            })
+        );
+        for extended in [false, true] {
+            assert_eq!(
+                Anime::build_from_bytes(&info_bytes(1), &action_bytes(extended, -1)),
+                Err(BuildError::InvalidValue {
+                    context: "anime header",
+                    message: "negative frame count",
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_every_truncated_action_prefix() {
+        for extended in [false, true] {
+            let bytes = action_bytes(extended, 2);
+            for len in 0..bytes.len() {
+                assert!(
+                    matches!(
+                        Anime::build_from_bytes(&info_bytes(1), &bytes[..len]),
+                        Err(BuildError::BufferTooShort { .. })
+                    ),
+                    "extended={extended}, prefix={len}"
+                );
+            }
+            assert!(Anime::build_from_bytes(&info_bytes(1), &bytes).is_ok());
+        }
+    }
+
+    #[test]
+    fn supports_empty_anime_and_zero_frame_actions() {
+        assert!(
+            Anime::build_from_bytes(&info_bytes(0), &[])
+                .unwrap()
+                .actions
+                .is_empty()
+        );
+        let mut bytes = action_bytes(true, 0);
+        bytes.extend(action_bytes(false, 0));
+        let anime = Anime::build_from_bytes(&info_bytes(2), &bytes).unwrap();
+        assert_eq!(anime.actions.len(), 2);
+        assert!(anime.actions.iter().all(|action| action.frames.is_empty()));
+        assert!(matches!(anime.actions[0].header, AnimeHeader::Extended(_)));
+        assert!(matches!(anime.actions[1].header, AnimeHeader::Standard(_)));
+    }
+
+    #[test]
+    fn reports_frame_truncation_at_absolute_offset_in_later_action() {
+        let mut bytes = action_bytes(true, 1);
+        bytes.extend(action_bytes(false, 1));
+        let needed = bytes.len();
+        bytes.pop();
+        assert_eq!(
+            Anime::build_from_bytes(&info_bytes(2), &bytes),
+            Err(BuildError::BufferTooShort {
+                context: "anime frame",
+                needed,
+                actual: needed - 1,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_after_nonempty_action() {
+        let mut bytes = action_bytes(false, 1);
+        bytes.extend_from_slice(&[1, 2]);
+        assert_eq!(
+            Anime::build_from_bytes(&info_bytes(1), &bytes),
+            Err(BuildError::TrailingBytes {
+                context: "anime data",
+                remaining: 2,
+            })
+        );
+    }
 }

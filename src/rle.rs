@@ -694,4 +694,152 @@ mod tests {
         let decoded_simd = rle_decode_simd(&encoded_simd).unwrap();
         assert_eq!(decoded_simd, source);
     }
+
+    #[test]
+    fn all_invalid_flags_report_the_command_offset_in_both_decoders() {
+        for op in [0x3, 0x4, 0x5, 0x6, 0x7, 0xb, 0xf] {
+            for low in 0..=15 {
+                let flag = (op << 4) | low;
+                let encoded = [0x01, 0x42, flag];
+                let error = RleError::InvalidFlag { position: 2, flag };
+                assert_eq!(rle_decode(&encoded), Err(error.clone()));
+                assert_eq!(rle_decode_simd(&encoded), Err(error));
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_commands_report_exact_required_and_remaining_bytes() {
+        let cases: &[(&[u8], usize, usize)] = &[
+            (&[0x03, 0xaa], 3, 1),
+            (&[0x10], 1, 0),
+            (&[0x10, 0x10, 0xaa], 16, 1),
+            (&[0x20], 2, 0),
+            (&[0x20, 0x01], 2, 1),
+            (&[0x20, 0x01, 0x00], 256, 0),
+            (&[0x80], 1, 0),
+            (&[0x90], 1, 0),
+            (&[0x90, 0xaa], 1, 0),
+            (&[0xa0], 1, 0),
+            (&[0xa0, 0xaa], 2, 0),
+            (&[0xa0, 0xaa, 0x01], 2, 1),
+            (&[0xd0], 1, 0),
+            (&[0xe0], 2, 0),
+            (&[0xe0, 0x01], 2, 1),
+        ];
+        for &(command, needed, remaining) in cases {
+            for prefix in [&[][..], &[0x01, 0x42][..]] {
+                let input = [prefix, command].concat();
+                let error = RleError::UnexpectedEof {
+                    position: prefix.len(),
+                    needed,
+                    remaining,
+                };
+                assert_eq!(rle_decode(&input), Err(error.clone()), "{input:02x?}");
+                assert_eq!(rle_decode_simd(&input), Err(error), "{input:02x?}");
+            }
+        }
+    }
+
+    #[test]
+    fn zero_length_commands_consume_their_headers_and_repeat_value() {
+        let encoded = [
+            0x00, 0x10, 0x00, 0x20, 0x00, 0x00, 0x80, 0xff, 0x90, 0xff, 0x00, 0xa0, 0xff, 0x00,
+            0x00, 0xc0, 0xd0, 0x00, 0xe0, 0x00, 0x00, 0x01, 0x42,
+        ];
+        assert_decode_variants(&encoded, &[0x42]);
+    }
+
+    #[test]
+    fn command_length_boundaries_match_independent_wire_bytes() {
+        // Explicit wire headers avoid relying on encode/decode sharing a length bug.
+        for (len, literal, repeat, zero) in [
+            (15, vec![0x0f], vec![0x8f, 0x55], vec![0xcf]),
+            (
+                16,
+                vec![0x10, 0x10],
+                vec![0x90, 0x55, 0x10],
+                vec![0xd0, 0x10],
+            ),
+            (
+                4095,
+                vec![0x1f, 0xff],
+                vec![0x9f, 0x55, 0xff],
+                vec![0xdf, 0xff],
+            ),
+            (
+                4096,
+                vec![0x20, 0x10, 0],
+                vec![0xa0, 0x55, 0x10, 0],
+                vec![0xe0, 0x10, 0],
+            ),
+            (
+                0xfffff,
+                vec![0x2f, 0xff, 0xff],
+                vec![0xaf, 0x55, 0xff, 0xff],
+                vec![0xef, 0xff, 0xff],
+            ),
+        ] {
+            let raw: Vec<_> = (0..len).map(|index| (index % 251 + 1) as u8).collect();
+            let raw_encoded = [literal, raw.clone()].concat();
+            for (source, encoded) in [
+                (raw, raw_encoded),
+                (vec![0x55; len], repeat),
+                (vec![0; len], zero),
+            ] {
+                assert_decode_variants(&encoded, &source);
+                assert_eq!(rle_encode(&source), encoded);
+                assert_eq!(rle_encode_simd(&source), encoded);
+            }
+        }
+    }
+
+    #[test]
+    fn splits_literal_and_nonzero_repeat_runs_at_maximum_length() {
+        let raw: Vec<_> = (0..MAX_LEN + 7)
+            .map(|index| (index % 251 + 1) as u8)
+            .collect();
+        let mut raw_encoded = vec![0x2f, 0xff, 0xff];
+        raw_encoded.extend_from_slice(&raw[..MAX_LEN]);
+        raw_encoded.push(0x07);
+        raw_encoded.extend_from_slice(&raw[MAX_LEN..]);
+        for (source, expected) in [
+            (raw, raw_encoded),
+            (
+                vec![0x55; MAX_LEN + 7],
+                vec![0xaf, 0x55, 0xff, 0xff, 0x87, 0x55],
+            ),
+        ] {
+            assert_eq!(rle_encode(&source), expected);
+            assert_eq!(rle_encode_simd(&source), expected);
+            assert_decode_variants(&expected, &source);
+        }
+    }
+
+    #[test]
+    fn scalar_and_simd_agree_on_misaligned_slices_and_mixed_run_boundaries() {
+        let mut state = 0x1234_5678u32;
+        for offset in 0..16 {
+            for len in [0, 1, 2, 3, 4, 15, 16, 17, 31, 32, 33, 255, 256, 257] {
+                let mut storage = vec![0xee; offset];
+                for _ in 0..len {
+                    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                    storage.push((state >> 24) as u8);
+                }
+                storage.extend(std::iter::repeat_n(0, len));
+                storage.extend(std::iter::repeat_n(0x55, len));
+                storage.extend_from_slice(&[1, 0, 0, 2, 3, 3, 3, 4]);
+                let source = &storage[offset..];
+                let encoded = rle_encode(source);
+                assert_eq!(
+                    rle_encode_simd(source),
+                    encoded,
+                    "offset={offset}, len={len}"
+                );
+                let mut encoded_storage = vec![0xff; offset];
+                encoded_storage.extend(encoded);
+                assert_decode_variants(&encoded_storage[offset..], source);
+            }
+        }
+    }
 }
