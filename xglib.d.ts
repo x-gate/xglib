@@ -117,6 +117,8 @@ export function anime_header_extended_size(): number;
 export function anime_frame_size(): number;
 export function map_header_size(): number;
 export function cgp_size(): number;
+/** Full file size; cgp_size() remains the active 672-byte size. */
+export function cgp_file_size(): number;
 export function palette_color_count(): number;
 export function cgp_custom_color_count(): number;
 export function palette_fixed_prefix_count(): number;
@@ -130,6 +132,25 @@ export function graphic_build_from_bytes(
 ): Graphic;
 
 export function game_palette_build_from_cgp(bytes: Uint8Array): Palette;
+
+export function graphic_strict_build_from_bytes(
+  info_bytes: Uint8Array,
+  data_bytes: Uint8Array,
+  palette_bytes: Uint8Array,
+): Graphic;
+
+/** Versions 0/1 use CGP; versions >= 2 use their embedded palette. */
+export function graphic_build_from_cgp(
+  info_bytes: Uint8Array,
+  data_bytes: Uint8Array,
+  cgp_bytes: Uint8Array,
+): Graphic;
+
+export function graphic_strict_build_from_cgp(
+  info_bytes: Uint8Array,
+  data_bytes: Uint8Array,
+  cgp_bytes: Uint8Array,
+): Graphic;
 
 export function game_palette_build_from_bytes(bytes: Uint8Array): Palette;
 

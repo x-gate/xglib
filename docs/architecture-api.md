@@ -27,9 +27,10 @@
 | `GraphicInfo::build_from_bytes` | 恰好 40 bytes | `Result<GraphicInfo, BuildError>` |
 | `Graphic::build_from_bytes` | 單筆 info、單筆 RD record、原始 BGR 色表 | `Result<Graphic, BuildError>`，像素長度不符時補零或截斷 |
 | `Graphic::strict_build_from_bytes` | 同上 | 像素長度不符即錯誤；並不全面驗證 header 或色表索引 |
+| `Graphic::build_from_cgp` / `strict_build_from_cgp` | 單筆 info、單筆 RD record、外部 CGP | 一般 / 嚴格像素長度模式；皆檢查色表索引，內嵌色表優先 |
 | `AnimeInfo::build_from_bytes` | 恰好 12 bytes | `Result<AnimeInfo, BuildError>` |
 | `Anime::build_from_bytes` | 單筆 info、恰好單筆動畫資料 | `Result<Anime, BuildError>` |
-| `Palette::build_from_cgp` | 恰好 672 bytes | 224 色加固定前後各 16 色，共 256 色 |
+| `Palette::build_from_cgp` | 672 有效 bytes 或完整 708-byte CGP | 224 色加固定前後各 16 色，共 256 色 |
 | `Palette::build_from_bytes` | 長度為 3 的倍數的原始 BGR bytes | 原樣數量的色表，可為空，不補固定色 |
 | `Map::build_from_bytes` | 恰好一個 MAP 檔案 | header 與 `ground` / `object` / `meta` |
 | `rle_decode` / `rle_encode` | `&[u8]` | `Result<Vec<u8>, RleError>` / `Vec<u8>` |
@@ -65,19 +66,23 @@ fn parse_graphic_at(
 
 ### 調色盤整合
 
-`Graphic` version < 2 一律使用 `Palette::build_from_bytes(palette_bytes)`。如果已經透過正確的 CGP 格式載入出 `Palette`，Rust 呼叫端可以將每色的 `blue, green, red` 依序串成 BGR bytes，再傳入圖像解析器；或解析後明確替換公開的 `graphic.palette`。這只解決 API 銜接，**不解決本次 708-byte CGP 的未定義布局**。
+既有 `Graphic::*build_from_bytes` 在 version < 2 將第三個參數解讀為原始 BGR；不變更此契約、不根據長度猜 CGP，以免 672/708-byte raw 色表被誤判。
 
-version ≥ 2 會從解碼資料尾端取內嵌色表，忽略第三個參數。此分支本次沒有真實樣本，只有合成測試。`payload` 是 palette index 的向量，不是 RGBA；使用 `palette.colors[index]` 前必須檢查界限。
+新使用端直接傳入 `.cgp` bytes 至 `Graphic::build_from_cgp` 或 `Graphic::strict_build_from_cgp`。支援 672 有效 bytes 與完整 708-byte 檔案。`CGP_SIZE` / `cgp_size()` 保持 672；`CGP_FILE_SIZE` / `cgp_file_size()` 提供 708。
+
+version ≥ 2 在所有入口都使用內嵌色表，忽略外部參數；因此 CGP builder 在此情況下不要求有效外部 CGP。新入口會檢查輸出像素索引界限，包括內嵌色表。原有 raw BGR 入口仍保持原始行為。
+
+`payload` 是 palette index 的向量，不是 RGBA。CGP 一般入口仍會截尾 / 補零；研究或驗證用途選 strict，明確處理錯誤，不以補零掩蓋來源異常。
 
 ## WASM / TypeScript
 
-`src/wasm.rs` 匯出 `graphic_build_from_bytes`、`anime_build_from_bytes`、`map_build_from_bytes`、`game_palette_build_from_cgp`、`game_palette_build_from_bytes`，以及各格式大小常數的 getter（名稱見 `xglib.d.ts`）。未匯出 strict graphic builder 或 RLE；JS 呼叫 `graphic_build_from_bytes` 使用的是寬鬆模式。
+`src/wasm.rs` 匯出 `graphic_build_from_bytes`、`anime_build_from_bytes`、`map_build_from_bytes`、`game_palette_build_from_cgp`、`game_palette_build_from_bytes`，以及各格式大小常數的 getter（名稱見 `xglib.d.ts`）。新增 `graphic_build_from_cgp`、`graphic_strict_build_from_cgp`、`graphic_strict_build_from_bytes` 與 `cgp_file_size`。原有 `graphic_build_from_bytes` 仍是 raw BGR 寬鬆模式；RLE 尚未匯出。
 
 輸入為 `Uint8Array`。輸出以 `serde_wasm_bindgen::to_value` 轉換；目前手寫宣告以 JS object 與 `number[]` 描述，`AnimeHeader` 為 `{ Standard: ... } | { Extended: ... }`，色彩為 `red / green / blue / alpha`。這些型別宣告未由本次 JS runtime 測試確認。
 
 失敗時 `Result<JsValue, JsValue>` 走 JS throw 路徑，內容是 Debug / Serde 錯誤**字串**，並非有 `code` 欄位的結構化錯誤，也不保證是 `Error` instance。
 
-repository 未含 `package.json`、JS glue、bundler 或自動產生 `.d.ts` 的流程。若要準備 WASM，以下是預備建置流程，**本次未執行**：
+repository 未含 `package.json`、JS glue、bundler 或自動產生 `.d.ts` 的流程。若要準備 WASM，本次已安裝 WASM target 並完成以下 `cargo build`；CLI 安裝、JS glue 產生與 JS runtime 驗證仍未執行：
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -93,4 +98,4 @@ wasm-bindgen target/wasm32-unknown-unknown/release/xglib.wasm --target web --out
 
 `BuildError` 包含 `BufferTooShort`、`InvalidMagic`、`InvalidValue`、`Unsupported`、`TrailingBytes`、`Rle`；`Unsupported` 目前沒有使用的解析分支。錯誤有 context，但缺少檔名與整體索引列位置，應由上層補上。`BuildError` / `RleError` 尚未實作 `Display` 或 `std::error::Error`，範例因此使用 `format!("{e:?}")`。
 
-`strict` 只加強像素長度檢查，不檢查所有 metadata、版本白名單、palette index 或圖像/動畫 ID 關係。RLE 沒有解壓輸出上限；動畫依 frame count 預先配置，Map 的最後 `20 + layer_size * 3` 也不是完整 checked arithmetic。將此 library 用於不受信任資料前，需要另外強化資源上限與所有整數運算。本次是特定本機資料的相容性研究，未進行 fuzzing 或任意輸入安全性驗證。
+原有 raw BGR `strict` 只加強像素長度檢查。新增的 CGP 圖像入口也驗證 palette index；所有入口均未全面檢查 metadata、版本白名單或圖像/動畫 ID 關係。RLE 沒有解壓輸出上限；動畫依 frame count 預先配置，Map 的最後 `20 + layer_size * 3` 也不是完整 checked arithmetic。將此 library 用於不受信任資料前，需要另外強化資源上限與所有整數運算。本次是特定本機資料的相容性研究，未進行 fuzzing 或任意輸入安全性驗證。

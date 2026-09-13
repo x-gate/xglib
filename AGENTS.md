@@ -6,7 +6,7 @@
 
 - 此處是獨立 Rust library repository，使用 edition 2024、Cargo 與已提交的 `Cargo.lock`；不是遊戲 client，也沒有資源檔案發布流程。
 - 開始前閱讀 `README.md`、`Cargo.toml`、`docs/architecture-api.md`，並在本 repository 確認 `git status --short`。
-- 格式變更先讀 `docs/formats.md` 與 `docs/validation-2026-09-13.md`。匯入程式碼是研究證據，不等同完整或權威規格。
+- 格式變更先讀 `docs/formats.md`、`docs/compatibility.md` 與 `docs/validation-2026-09-13.md`。匯入程式碼是研究證據，不等同完整或權威規格。
 - 目前未訂定 MSRV、正式授權與發布方案；不得將臨時選擇寫成既定標準。
 
 ## 程式碼慣例
@@ -36,7 +36,7 @@ cargo clippy --locked --offline --all-targets -- -D warnings
 cargo doc --locked --offline --no-deps
 ```
 
-依賴未快取時先用 `cargo fetch --locked`。目前基準的 rustfmt / Clippy 並不乾淨；將既存問題和此次引入的問題分開記錄，不要順手大幅格式化或升級套件。
+依賴未快取時先用 `cargo fetch --locked`。匯入基準曾有 rustfmt / Clippy 問題，相容性分支已清理；後續變更維持檢查通過，不要藉此大幅重構或升級套件。
 
 修改解析行為時新增能重現問題的合成回歸測試；修改 RLE 時涵蓋邊界長度、截斷、非法 flag 與 scalar / SIMD 對照。需要真實資料時，依 README 重跑唯讀驗證，檢查結尾的完整性標記與輸入未改變標記；exit 1 可能是已記錄的相容性問題，不能直接當成驗證成功。
 

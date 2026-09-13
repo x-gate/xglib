@@ -8,6 +8,7 @@ use xglib::{Anime, AnimeHeader, AnimeInfo, Graphic, GraphicInfo, Map, Palette};
 struct Report {
     counts: BTreeMap<String, u64>,
     errors: BTreeMap<String, (u64, String)>,
+    warnings: BTreeMap<String, (u64, String)>,
 }
 
 impl Report {
@@ -20,6 +21,14 @@ impl Report {
             .errors
             .entry(key.to_owned())
             .or_insert_with(|| (0, format!("{item}: {error:?}")));
+        entry.0 += 1;
+    }
+
+    fn warn(&mut self, key: &str, item: impl std::fmt::Display, detail: impl std::fmt::Debug) {
+        let entry = self
+            .warnings
+            .entry(key.to_owned())
+            .or_insert_with(|| (0, format!("{item}: {detail:?}")));
         entry.0 += 1;
     }
 }
@@ -69,12 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(palette) = Palette::build_from_bytes(&bytes) {
             report.add(&format!("palette.raw_colors.{}", palette.colors.len()), 1);
         }
-        // Diagnostic only: this does not establish what trailing bytes mean.
-        if let Some(prefix) = bytes.get(..xglib::CGP_SIZE)
-            && Palette::build_from_cgp(prefix).is_ok()
-        {
-            report.add("palette.first_672_cgp_ok_hypothesis", 1);
-        }
     }
 
     let info = fs::read(root.join("bin/GraphicInfo_66.bin"))?;
@@ -96,7 +99,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (g.id, g.addr, g.len, g.width, g.height, g.map_id);
         report.add("graphic.records", 1);
         if !ids.insert(id) {
-            report.error("graphic.duplicate_id", row, id);
+            // IDs are not unique. Every source row is still parsed below.
+            report.warn("graphic.duplicate_id", row, id);
         }
         map_ids.insert(map_id);
         let span = usize::try_from(len)
@@ -129,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let declared = i32::from_le_bytes(record[12..16].try_into()?);
         if declared != len {
-            report.error("graphic.header_length_vs_info", row, (declared, len));
+            report.warn("graphic.header_length_vs_info", row, (declared, len));
         }
         if version == 0 {
             report.add(
@@ -140,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 1,
             );
         }
-        let strict = Graphic::strict_build_from_bytes(bytes, record, &cgp);
+        let strict = Graphic::strict_build_from_cgp(bytes, record, &cgp);
         if let Err(ref err) = strict {
             report.error("graphic.strict", format!("row={row}, id={id}"), err);
             if width >= 0 && height >= 0 && version < 2 {
@@ -164,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let graphic = match strict {
             Ok(graphic) => graphic,
-            Err(_) => match Graphic::build_from_bytes(bytes, record, &cgp) {
+            Err(_) => match Graphic::build_from_cgp(bytes, record, &cgp) {
                 Ok(graphic) => {
                     report.add("graphic.lenient_only", 1);
                     graphic
@@ -176,6 +180,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         };
         report.add("graphic.decoded_pixels", graphic.payload.len());
+        if version < 2
+            && graphic
+                .payload
+                .iter()
+                .any(|&index| usize::from(index) >= cgp.len() / 3)
+        {
+            report.add("graphic.legacy_raw_palette_index_risk", 1);
+        }
         if graphic
             .payload
             .iter()
@@ -235,7 +247,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for a in &rows {
         let (id, addr) = (a.id, a.addr);
         if !anime_ids.insert(id) {
-            report.error("anime.duplicate_id", id, "duplicate");
+            report.warn(
+                "anime.duplicate_id",
+                id,
+                "duplicate; all source rows retained",
+            );
         }
         if addr < 0 || addr as usize > data.len() || !addresses.insert(addr as usize) {
             return Err(format!("invalid or duplicate anime address: {addr}").into());
@@ -314,6 +330,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     for (key, (count, first)) in &report.errors {
         println!("ERROR {key}: count={count}; first={first}");
+    }
+    for (key, (count, first)) in &report.warnings {
+        println!("WARN {key}: count={count}; first={first}");
     }
     println!("audit_complete=true");
     if !report.errors.is_empty() {

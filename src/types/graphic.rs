@@ -207,7 +207,13 @@ impl Graphic {
         data_bytes: &[u8],
         palette_bytes: &[u8],
     ) -> Result<Self, BuildError> {
-        Self::build_from_bytes_with_mode(info_bytes, data_bytes, palette_bytes, false)
+        Self::build_from_bytes_with_mode(
+            info_bytes,
+            data_bytes,
+            palette_bytes,
+            false,
+            Palette::build_from_bytes,
+        )
     }
 
     pub fn strict_build_from_bytes(
@@ -215,7 +221,60 @@ impl Graphic {
         data_bytes: &[u8],
         palette_bytes: &[u8],
     ) -> Result<Self, BuildError> {
-        Self::build_from_bytes_with_mode(info_bytes, data_bytes, palette_bytes, true)
+        Self::build_from_bytes_with_mode(
+            info_bytes,
+            data_bytes,
+            palette_bytes,
+            true,
+            Palette::build_from_bytes,
+        )
+    }
+
+    /// Builds a graphic using an external CGP for versions 0/1.
+    /// Embedded palettes take precedence for versions >= 2.
+    /// Pixel lengths are normalized as in `build_from_bytes`; palette indices
+    /// are checked. Use `strict_build_from_cgp` to reject length mismatches.
+    pub fn build_from_cgp(
+        info_bytes: &[u8],
+        data_bytes: &[u8],
+        cgp_bytes: &[u8],
+    ) -> Result<Self, BuildError> {
+        Self::build_from_cgp_with_mode(info_bytes, data_bytes, cgp_bytes, false)
+    }
+
+    /// Like `build_from_cgp`, but rejects decoded pixel length mismatches.
+    pub fn strict_build_from_cgp(
+        info_bytes: &[u8],
+        data_bytes: &[u8],
+        cgp_bytes: &[u8],
+    ) -> Result<Self, BuildError> {
+        Self::build_from_cgp_with_mode(info_bytes, data_bytes, cgp_bytes, true)
+    }
+
+    fn build_from_cgp_with_mode(
+        info_bytes: &[u8],
+        data_bytes: &[u8],
+        cgp_bytes: &[u8],
+        strict: bool,
+    ) -> Result<Self, BuildError> {
+        let graphic = Self::build_from_bytes_with_mode(
+            info_bytes,
+            data_bytes,
+            cgp_bytes,
+            strict,
+            Palette::build_from_cgp,
+        )?;
+        if graphic
+            .payload
+            .iter()
+            .any(|&index| usize::from(index) >= graphic.palette.colors.len())
+        {
+            return Err(BuildError::InvalidValue {
+                context: "graphic palette index",
+                message: "pixel index exceeds palette color count",
+            });
+        }
+        Ok(graphic)
     }
 
     fn build_from_bytes_with_mode(
@@ -223,6 +282,7 @@ impl Graphic {
         data_bytes: &[u8],
         palette_bytes: &[u8],
         strict: bool,
+        external_palette_builder: fn(&[u8]) -> Result<Palette, BuildError>,
     ) -> Result<Self, BuildError> {
         let info = GraphicInfo::build_from_bytes(info_bytes)?;
         let header = parse_graphic_header(data_bytes)?;
@@ -265,7 +325,7 @@ impl Graphic {
         } else {
             let decoded = decode_graphic_payload(header.version, &data_bytes[header_size..])?;
             let payload = normalize_graphic_payload(&decoded, expected_len, strict)?;
-            let palette = Palette::build_from_bytes(palette_bytes)?;
+            let palette = external_palette_builder(palette_bytes)?;
             Ok(Self {
                 info,
                 header,

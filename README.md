@@ -6,16 +6,16 @@
 
 ## 目前可用程度
 
-指定本機樣本的全量驗證結果：
+相容性修復後，指定本機樣本的全量驗證結果：
 
 | 範圍 | 結果 |
 | --- | --- |
 | `GraphicInfo_66.bin` / `Graphic_66.bin` | 252,824 筆；252,635 筆通過嚴格像素長度檢查，188 筆多解出 1 byte，1 筆負高度無法解析 |
 | `AnimeInfo_4.bin` / `Anime_4.bin` | 3,186 筆全部解析成功，2,413,106 個 frame 的圖像 ID 都存在於指定圖像索引 |
-| `pal/*.cgp` | 35 個皆為 708 bytes；現有 `build_from_cgp` 要求 672 bytes，全部拒絕 |
+| `pal/*.cgp` | 35 個 708-byte CGP 全部載入成功；以明確 CGP 圖像入口解析後，色彩索引越界為 0 |
 | `map/**/*.dat` | 605 個全部解析成功，共 5,219,473 格；地圖圖塊與完整素材對應仍未驗證 |
 
-**可作為結構解析與後續研究基礎，尚不能視為完整、正確的遊戲素材載入方案。** 特別注意外部 CGP 與圖像 API 的調色盤契約不同、ID 重複、部分圖像長度異常，以及尚未比對原作畫面。詳見[驗證報告](docs/validation-2026-09-13.md)。本次未修改既有解析行為。
+**可作為結構解析與後續研究基礎，尚不能視為完整、正確的遊戲素材載入方案。** 已修復 CGP 長度與圖像色表整合問題；ID 重複、部分圖像長度異常及畫面語意仍需保留診斷。詳見[相容性修復報告](docs/compatibility.md)，以及保留的[修復前驗證報告](docs/validation-2026-09-13.md)。
 
 ## 開發環境與安裝
 
@@ -35,7 +35,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo doc --locked --no-deps
 ```
 
-已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 34 個單元測試通過；匯入版本尚有 rustfmt 與 Clippy 問題，詳見驗證報告，不應把所有指令描述成已通過。
+已有依賴快取時可加入 `--offline`（`cargo fmt` 除外）。目前 34 個單元測試與 8 個相容性回歸測試通過，rustfmt、嚴格 Clippy 與文件建置也通過。WASM target 已編譯成功；尚未執行 JS runtime 測試。
 
 其他 Rust repository 可使用 path dependency；路徑相對於該 repository 的 `Cargo.toml`：
 
@@ -61,9 +61,9 @@ let palette = Palette::build_from_bytes(&[0, 0, 0, 0x10, 0x20, 0x30]).unwrap();
 assert_eq!(palette.colors[1].red, 0x30);
 ```
 
-`GraphicInfo` 必須傳入恰好 40 bytes，`AnimeInfo` 恰好 12 bytes。`Graphic` / `Anime` 接收單筆資料切片，不會自行根據 `addr` 尋址。研究圖像時優先用 `Graphic::strict_build_from_bytes`；預設版本會截斷超出部分或補零。
+`GraphicInfo` 必須傳入恰好 40 bytes，`AnimeInfo` 恰好 12 bytes。`Graphic` / `Anime` 接收單筆資料切片，不會自行根據 `addr` 尋址。研究外部 CGP 圖像時優先用 `Graphic::strict_build_from_cgp`；`Graphic::build_from_cgp` 保留原有的截尾 / 補零行為。raw BGR 使用原本的 `*_build_from_bytes` 入口。
 
-`Graphic` 第三個參數是原始 BGR 色表，**不會自動呼叫 `Palette::build_from_cgp`**。直接傳入 `.cgp` 可能成功返回卻產生錯誤色表。完整切片範例與 WASM 限制見 [API 與架構](docs/architecture-api.md)。
+`Graphic` 第三個參數是原始 BGR 色表，**不會自動呼叫 `Palette::build_from_cgp`**。直接傳入 `.cgp` 可能成功返回卻產生錯誤色表，應改用新增的 `Graphic::build_from_cgp` / `strict_build_from_cgp`。兩者皆接受 672 或 708 bytes，並檢查像素索引界限；version ≥ 2 仍優先使用內嵌色表。完整切片範例與 WASM 限制見 [API 與架構](docs/architecture-api.md)。
 
 ## 重跑本機資源驗證
 
@@ -74,7 +74,7 @@ cargo build --locked --offline --release --example verify_resources
 python3 scripts/verify_resources.py ../CGoriginmood/Assets > target/resource-audit.txt
 ```
 
-腳本只讀取指定四個 `.bin`、`bin/pal` 與 `map`；不啟動遊戲、不輸出解碼素材。它會列出檔案大小與 SHA-256，呼叫 Rust 範例，再次比對輸入清單、大小與雜湊。日誌寫在已忽略的 `target/`。目前樣本預期回傳 **exit 1**，日誌末端包含 `audit_complete=true`、`inputs_unchanged=true`，代表掃描完成但發現相容性問題。
+腳本只讀取指定四個 `.bin`、`bin/pal` 與 `map`；不啟動遊戲、不輸出解碼素材。它會列出檔案大小與 SHA-256，呼叫 Rust 範例，再次比對輸入清單、大小與雜湊。日誌寫在已忽略的 `target/`。目前樣本預期回傳 **exit 1**，日誌末端包含 `audit_complete=true`、`inputs_unchanged=true`，代表掃描完成但仍有 188 筆像素長度不符與 1 筆負高度；不會將剩餘問題隱藏成成功。
 
 資料是選用的本機研究輸入，不隨 repository 提供；一般單元測試完全不依賴它。完整掃描一次載入約 637 MB 的圖像檔，另有索引、解碼與執行時記憶體需求。不要將輸出重導至 `CGoriginmood/`。
 
@@ -83,6 +83,7 @@ python3 scripts/verify_resources.py ../CGoriginmood/Assets > target/resource-aud
 - [AGENTS.md](AGENTS.md)：此 repository 的修改、驗證與素材處理規則。
 - [API 與架構](docs/architecture-api.md)：模組責任、Rust / WASM 介面、錯誤與整合方式。
 - [二進位格式與 RLE](docs/formats.md)：欄位 offset、解碼流程、推論邊界。
+- [相容性修復報告](docs/compatibility.md)：修復依據、API 遷移方式、前後對照與剩餘問題。
 - [2026-09-13 驗證報告](docs/validation-2026-09-13.md)：樣本指紋、方法、成功範圍與已知問題。
 
 ## 授權與歸屬

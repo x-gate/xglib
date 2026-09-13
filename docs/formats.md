@@ -46,7 +46,7 @@
 3. `version & 1 == 1` 時 RLE 解碼；否則直接複製 bytes。
 4. version ≥ 2 從解碼結果末尾分出 `palette_size` bytes，前段為像素；色表長度不得超過解碼結果。
 5. strict 模式要求像素長度等於 `info.width * info.height`；一般模式多則截尾、少則以 0 補滿。
-6. version < 2 將第三個參數當原始 BGR 色表；version ≥ 2 將剛分出的尾段當 BGR 色表。兩者皆呼叫 `Palette::build_from_bytes`。
+6. `*_build_from_bytes` 保留原始 BGR 契約。新增 `build_from_cgp` / `strict_build_from_cgp` 在 version < 2 呼叫 `Palette::build_from_cgp`；version ≥ 2 在所有入口皆使用內嵌原始 BGR 色表。CGP 圖像入口額外檢查像素索引不超出色表，其他行為相同。
 
 | version | 現有實作的解讀 | 本次真實樣本 |
 | --- | --- | --- |
@@ -66,7 +66,7 @@
 
 ### `Palette::build_from_cgp`
 
-實作只接受 **672 = 224 × 3 bytes**。不符合長度時一律回 `BufferTooShort`，即使實際輸入更長。
+相容性修復後接受 **672 = 224 × 3 bytes** 的有效色彩資料，或 **708 bytes** 的完整 CGP。兩者使用前 672 bytes 建構自訂色，完整檔案最後 36 bytes 不覆蓋固定後綴。`CGP_SIZE` 保持 672；新增 `CGP_FILE_SIZE = 708`。短於 672 回 `BufferTooShort`，其他非 672/708 長度回 `InvalidValue`，不接受任意尾端資料。
 
 | 輸出 index | 來源 | 色彩 / alpha 處理 |
 | --- | --- | --- |
@@ -80,7 +80,7 @@
 
 要求長度可被 3 整除。第 n 個 triple 直接成為第 n 色，順序 B、G、R；輸出第一色 alpha=0，其餘 255。允許空色表，也未限定最多 256 色。**不會加入固定前後色。**
 
-實測所有 35 個 CGP 都是 708 bytes：直接走 raw 入口會得到 236 色，走 CGP 入口全部失敗。僅取前 672 bytes 的診斷可得到 256 色，但剩下 36 bytes 不是可忽略 padding 的既定事實。須確認整個 708-byte 格式後才能決定偏移與截取策略。
+實測所有 35 個 CGP 都是 708 bytes，修復後 CGP 入口均回傳 256 色。raw 入口仍回傳 236 色，並不自動猜測格式。前 224 色的讀取範圍有其他公開解析器作交叉依據；最後 36 bytes 不參與本色表建構，但未宣稱它們在原作中完全沒有用途。依據與限制見[相容性修復報告](compatibility.md)。
 
 ## AnimeInfo：12 bytes / 筆
 
