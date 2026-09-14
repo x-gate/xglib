@@ -272,6 +272,30 @@ pub struct Anime {
 
 impl Anime {
     pub fn build_from_bytes(info_bytes: &[u8], data_bytes: &[u8]) -> Result<Self, BuildError> {
+        Self::build_with_header_size(info_bytes, data_bytes, None)
+    }
+
+    /// Parses every action with the container's header size (12 or 20 bytes).
+    /// Unlike the legacy entry point, later frame bytes cannot change the layout.
+    pub fn build_from_bytes_with_header_size(
+        info_bytes: &[u8],
+        data_bytes: &[u8],
+        header_size: usize,
+    ) -> Result<Self, BuildError> {
+        if ![ANIME_HEADER_STANDARD_SIZE, ANIME_HEADER_EXTENDED_SIZE].contains(&header_size) {
+            return Err(BuildError::InvalidValue {
+                context: "anime header size",
+                message: "expected 12 or 20 bytes",
+            });
+        }
+        Self::build_with_header_size(info_bytes, data_bytes, Some(header_size))
+    }
+
+    fn build_with_header_size(
+        info_bytes: &[u8],
+        data_bytes: &[u8],
+        fixed_header_size: Option<usize>,
+    ) -> Result<Self, BuildError> {
         let info = AnimeInfo::build_from_bytes(info_bytes)?;
         if info.act_cnt < 0 {
             return Err(BuildError::InvalidValue {
@@ -285,7 +309,7 @@ impl Anime {
 
         for _ in 0..info.act_cnt as usize {
             let remaining = &data_bytes[cursor..];
-            let (header, header_size) = parse_anime_header(remaining)?;
+            let (header, header_size) = parse_anime_header(remaining, fixed_header_size)?;
             cursor += header_size;
 
             let frame_count = match header {
@@ -320,7 +344,10 @@ impl Anime {
     }
 }
 
-fn parse_anime_header(bytes: &[u8]) -> Result<(AnimeHeader, usize), BuildError> {
+fn parse_anime_header(
+    bytes: &[u8],
+    fixed_header_size: Option<usize>,
+) -> Result<(AnimeHeader, usize), BuildError> {
     if bytes.len() < ANIME_HEADER_STANDARD_SIZE {
         return Err(BuildError::BufferTooShort {
             context: "anime header",
@@ -334,7 +361,18 @@ fn parse_anime_header(bytes: &[u8]) -> Result<(AnimeHeader, usize), BuildError> 
     let duration = read_i32_le(bytes, 4)?;
     let frame_cnt = read_i32_le(bytes, 8)?;
 
-    if bytes.len() >= ANIME_HEADER_EXTENDED_SIZE && read_i32_le(bytes, 16)? == -1 {
+    let extended = match fixed_header_size {
+        Some(size) => size == ANIME_HEADER_EXTENDED_SIZE,
+        None => bytes.len() >= ANIME_HEADER_EXTENDED_SIZE && read_i32_le(bytes, 16)? == -1,
+    };
+    if extended {
+        if bytes.len() < ANIME_HEADER_EXTENDED_SIZE {
+            return Err(BuildError::BufferTooShort {
+                context: "anime extended header",
+                needed: ANIME_HEADER_EXTENDED_SIZE,
+                actual: bytes.len(),
+            });
+        }
         Ok((
             AnimeHeader::Extended(AnimeHeaderExtended {
                 direct,
@@ -343,7 +381,7 @@ fn parse_anime_header(bytes: &[u8]) -> Result<(AnimeHeader, usize), BuildError> 
                 frame_cnt,
                 reserved: [bytes[12], bytes[13]],
                 reversed: read_i16_le(bytes, 14)?,
-                sentinel: -1,
+                sentinel: read_i32_le(bytes, 16)?,
             }),
             ANIME_HEADER_EXTENDED_SIZE,
         ))

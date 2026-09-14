@@ -97,3 +97,7 @@ python3 -B -m unittest discover -s tests -p 'test_*.py'
 ## 授權與歸屬
 
 此 repository 尚未附帶 LICENSE，`Cargo.toml` 也未宣告授權；請勿自行假定可依某個開源授權散布。原版資源不在本專案的授權範圍內，亦不得納入提交、套件或部署產物。本專案為非官方研究，未聲稱 Square Enix 授權或背書；相關遊戲名稱與商標屬各權利人。
+
+## 明確指定動畫 header layout
+
+2026-09-14 新增 `Anime::build_from_bytes_with_header_size` 與對應 WASM 入口，讓採用 xgtool 容器流程的使用端明確指定整段 12 / 20-byte header。既有逐動作偵測 API 維持相容；詳見 [layout 相容性說明](docs/animation-layout.md)。

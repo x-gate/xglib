@@ -160,3 +160,10 @@ export function anime_build_from_bytes(
   info_bytes: Uint8Array,
   data_bytes: Uint8Array,
 ): Anime;
+
+/** Uses one caller-selected layout for every action; existing auto-detection is unchanged. */
+export function anime_build_from_bytes_with_header_size(
+  info_bytes: Uint8Array,
+  data_bytes: Uint8Array,
+  header_size: 12 | 20,
+): Anime;

@@ -144,6 +144,18 @@ fn build_error_to_js(err: crate::BuildError) -> JsValue {
     JsValue::from_str(&format!("{err:?}"))
 }
 
+#[wasm_bindgen]
+pub fn anime_build_from_bytes_with_header_size(
+    info_bytes: &[u8],
+    data_bytes: &[u8],
+    header_size: u32,
+) -> Result<JsValue, JsValue> {
+    let anime =
+        Anime::build_from_bytes_with_header_size(info_bytes, data_bytes, header_size as usize)
+            .map_err(build_error_to_js)?;
+    serde_wasm_bindgen::to_value(&anime).map_err(serde_error_to_js)
+}
+
 fn serde_error_to_js(err: serde_wasm_bindgen::Error) -> JsValue {
     JsValue::from_str(&err.to_string())
 }

@@ -109,3 +109,7 @@ Python 入口支援 `--set base`（預設）與 `--set ex`，四個檔名只由 
 Rust 範例維持單一 Assets 參數的 base 預設行為；亦可指定四個 bin 目錄下的純檔名，順序為 GraphicInfo、Graphic、AnimeInfo、Anime。路徑或不完整參數組會拒絕。輸出 `resource.graphic_info`、`resource.graphic`、`resource.anime_info`、`resource.anime` 供核對。
 
 引用統計現改為 `anime.frames_missing_in_selected_graphics`、`anime.unique_refs_missing_in_selected_graphics`、`map.nonzero_tiles_without_selected_map_id`，取代先前硬編碼的 `graphic_66` 字樣。舊驗證報告保留舊名稱；消費診斷文字的腳本須同步調整。這不是函式庫 API 或二進位格式變更。
+
+## 2026-09-14：明確指定整段動畫 header 長度
+
+新增 `Anime::build_from_bytes_with_header_size(info_bytes, data_bytes, header_size)` 與 WASM 同名 snake-case 入口 `anime_build_from_bytes_with_header_size`；`header_size` 只接受 12 或 20。用於按照容器起點判定一次 layout 的使用端，避免後續 frame offsets 被誤認為 sentinel。舊入口保持逐動作自動判斷；輸出 Anime 結構與 strict 完整切片要求不變。來源、合成回歸案例與 rsc-manager 整合方式見 [明確動畫 layout](animation-layout.md)。
