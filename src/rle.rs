@@ -10,6 +10,7 @@ pub enum RleError {
         needed: usize,
         remaining: usize,
     },
+    // Retained for source compatibility; CGTool assigns semantics to all flag bytes.
     InvalidFlag {
         position: usize,
         flag: u8,
@@ -33,8 +34,22 @@ fn decode_impl(input: &[u8], use_simd: bool) -> Result<Vec<u8>, RleError> {
         let flag = input[cursor];
         cursor += 1;
 
-        let op = flag >> 4;
-        let low = usize::from(flag & 0x0f);
+        // CGTool DecompressJob: long literals occupy 0x20..=0x7f,
+        // long repeats 0xa0..=0xbf, and long zero runs 0xe0..=0xff.
+        // The length prefix uses five bits (literal aliases repeat every 0x20).
+        let op = match flag {
+            0x20..=0x7f => 0x2,
+            0xa0..=0xbf => 0xa,
+            0xe0..=0xff => 0xe,
+            _ => flag >> 4,
+        };
+        let low = usize::from(
+            flag & if matches!(op, 0x2 | 0xa | 0xe) {
+                0x1f
+            } else {
+                0x0f
+            },
+        );
 
         match op {
             0x0..=0x2 => {
@@ -54,12 +69,7 @@ fn decode_impl(input: &[u8], use_simd: bool) -> Result<Vec<u8>, RleError> {
                 let len = decode_len(op, low, input, &mut cursor, flag_pos)?;
                 append_zero(&mut output, len, use_simd);
             }
-            _ => {
-                return Err(RleError::InvalidFlag {
-                    position: flag_pos,
-                    flag,
-                });
-            }
+            _ => unreachable!(),
         }
     }
 
@@ -515,13 +525,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_invalid_flag() {
+    fn decode_rejects_truncated_long_literal() {
         let err = rle_decode(&[0x30]).unwrap_err();
         assert_eq!(
             err,
-            RleError::InvalidFlag {
+            RleError::UnexpectedEof {
                 position: 0,
-                flag: 0x30,
+                needed: 2,
+                remaining: 0
             }
         );
     }
@@ -651,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_matches_invalid_flag_cases() {
+    fn expanded_flags_still_reject_truncation() {
         let cases = [
             ("invalid flag 0x3?", vec![0x31]),
             ("invalid flag 0x4?", vec![0x42]),
@@ -664,8 +675,8 @@ mod tests {
         for (name, data) in cases {
             let err = rle_decode(&data).unwrap_err();
             assert!(
-                matches!(err, RleError::InvalidFlag { .. }),
-                "{name}: expected invalid flag error, got {err:?}"
+                matches!(err, RleError::UnexpectedEof { .. }),
+                "{name}: expected truncation error, got {err:?}"
             );
         }
     }
@@ -696,15 +707,47 @@ mod tests {
     }
 
     #[test]
-    fn all_invalid_flags_report_the_command_offset_in_both_decoders() {
+    fn expanded_flags_report_truncation_at_the_command_offset_in_both_decoders() {
         for op in [0x3, 0x4, 0x5, 0x6, 0x7, 0xb, 0xf] {
             for low in 0..=15 {
                 let flag = (op << 4) | low;
                 let encoded = [0x01, 0x42, flag];
-                let error = RleError::InvalidFlag { position: 2, flag };
+                let error = RleError::UnexpectedEof {
+                    position: 2,
+                    needed: if op == 0xb { 1 } else { 2 },
+                    remaining: 0,
+                };
                 assert_eq!(rle_decode(&encoded), Err(error.clone()));
                 assert_eq!(rle_decode_simd(&encoded), Err(error));
             }
+        }
+    }
+
+    #[test]
+    fn cgtool_long_runs_use_five_length_bits_and_literal_aliases() {
+        for flag in [0x20u8, 0x30, 0x40, 0x50, 0x60, 0x70, 0x7f] {
+            let len = (usize::from(flag % 0x20) << 16) + 3;
+            let mut wire = vec![flag, 0, 3];
+            wire.extend(std::iter::repeat_n(0x57, len));
+            let expected = vec![0x57; len];
+            assert_eq!(rle_decode(&wire).unwrap(), expected);
+            assert_eq!(rle_decode_simd(&wire).unwrap(), expected);
+            wire.pop();
+            assert!(matches!(
+                rle_decode(&wire),
+                Err(RleError::UnexpectedEof { .. })
+            ));
+        }
+        for flag in [0xb0u8, 0xbf, 0xf0, 0xff] {
+            let len = (usize::from(flag & 0x1f) << 16) + 3;
+            let wire = if flag < 0xc0 {
+                vec![flag, 0x57, 0, 3]
+            } else {
+                vec![flag, 0, 3]
+            };
+            let expected = vec![if flag < 0xc0 { 0x57 } else { 0 }; len];
+            assert_eq!(rle_decode(&wire).unwrap(), expected);
+            assert_eq!(rle_decode_simd(&wire).unwrap(), expected);
         }
     }
 

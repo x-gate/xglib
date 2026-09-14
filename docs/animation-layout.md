@@ -13,3 +13,7 @@ rsc-manager detects the first layout, bounds-checks all action/frame lengths, an
 Synthetic Rust regressions cover a later false sentinel, explicit extended layout with a noncanonical later sentinel, invalid header sizes, truncation, and trailing bytes. Existing Rust regressions remain unchanged. No original game data or xgtool implementation files were copied. Resource allocation limits remain the caller's responsibility; this addition is not a general parser-hardening change.
 
 Validation for this change: 77 Rust tests and 5 Python verification-tool tests passed; rustfmt, Clippy with warnings denied, and cargo doc passed. The wasm32 release build and generated JS bindings passed rsc-manager's 21 WASM/frontend tests and 8 production-browser tests. No original-resource visual comparison was performed.
+
+## 後續 CGTool 基準
+
+2026-09-14 後續使用者指定 CGTool 為基準；rsc-manager 已改用每個動作獨立偵測的 `anime_build_from_bytes`。本頁的固定 layout API 保留供 xgtool 契約使用，並未移除。見 [CGTool 對照](cgtool-audit.md)。

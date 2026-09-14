@@ -231,7 +231,7 @@ impl Graphic {
     }
 
     /// Builds a graphic using an external CGP for versions 0/1.
-    /// Embedded palettes take precedence for versions >= 2.
+    /// Non-empty embedded palettes take precedence for versions >= 2.
     /// Pixel lengths are normalized as in `build_from_bytes`; palette indices
     /// are checked. Use `strict_build_from_cgp` to reject length mismatches.
     pub fn build_from_cgp(
@@ -300,7 +300,7 @@ impl Graphic {
             }
 
             let palette_size = read_u32_le(data_bytes, 16)?;
-            let payload_bytes = &data_bytes[20..];
+            let payload_bytes = graphic_payload_bytes(data_bytes, &header, 20);
             let decoded = decode_graphic_payload(header.version, payload_bytes)?;
             let palette_size_usize = palette_size as usize;
 
@@ -311,10 +311,23 @@ impl Graphic {
                 });
             }
 
-            let pixel_len = decoded.len() - palette_size_usize;
-            let payload = normalize_graphic_payload(&decoded[..pixel_len], expected_len, strict)?;
-            let palette_bytes = &decoded[pixel_len..];
-            let palette = Palette::build_from_bytes(palette_bytes)?;
+            // CGTool places the embedded BGR bytes immediately after width * height
+            // pixels. Normalize the complete stream before splitting in lenient mode;
+            // splitting from its tail would shift palette bytes on excess output.
+            let total_len =
+                expected_len
+                    .checked_add(palette_size_usize)
+                    .ok_or(BuildError::InvalidValue {
+                        context: "graphic extended payload",
+                        message: "graphic payload size overflow",
+                    })?;
+            let decoded = normalize_graphic_payload(&decoded, total_len, strict)?;
+            let payload = decoded[..expected_len].to_vec();
+            let palette = if palette_size_usize == 0 {
+                external_palette_builder(palette_bytes)?
+            } else {
+                Palette::build_from_bytes(&decoded[expected_len..])?
+            };
 
             Ok(Self {
                 info,
@@ -323,7 +336,10 @@ impl Graphic {
                 palette,
             })
         } else {
-            let decoded = decode_graphic_payload(header.version, &data_bytes[header_size..])?;
+            let decoded = decode_graphic_payload(
+                header.version,
+                graphic_payload_bytes(data_bytes, &header, header_size),
+            )?;
             let payload = normalize_graphic_payload(&decoded, expected_len, strict)?;
             let palette = external_palette_builder(palette_bytes)?;
             Ok(Self {
@@ -334,6 +350,21 @@ impl Graphic {
             })
         }
     }
+}
+
+// A valid compressed RD length bounds the stream independently of the containing
+// index slice. Uncompressed records are addressed by pixel count, not DataLen.
+// Retain the legacy whole-slice behavior for unspecified/inconsistent lengths.
+fn graphic_payload_bytes<'a>(bytes: &'a [u8], header: &GraphicHeader, start: usize) -> &'a [u8] {
+    let declared = usize::try_from(header.data_len).ok();
+    let end = if header.version & 1 != 0 {
+        declared
+            .filter(|&len| len >= start && len <= bytes.len())
+            .unwrap_or(bytes.len())
+    } else {
+        bytes.len()
+    };
+    &bytes[start..end]
 }
 
 fn parse_graphic_header(bytes: &[u8]) -> Result<GraphicHeader, BuildError> {
@@ -786,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_only_pixels_preserving_embedded_palette() {
+    fn normalizes_complete_extended_stream_before_palette_split() {
         let palette = [0x10, 0x20, 0x30, 0x40, 0x50, 0x60];
         for version in [2, 3] {
             for pixels in [&[1][..], &[1, 0, 1][..]] {
@@ -799,11 +830,19 @@ mod tests {
                 let bytes = record_bytes(version, &payload, 6);
                 let info = info_bytes(2, 1);
                 let graphic = Graphic::build_from_bytes(&info, &bytes, &[]).unwrap();
-                assert_eq!(graphic.payload, [1, 0]);
-                assert_eq!(
-                    graphic.palette,
-                    Palette::build_from_bytes(&palette).unwrap()
-                );
+                if pixels.len() == 1 {
+                    assert_eq!(graphic.payload, [1, 0x10]);
+                    assert_eq!(
+                        graphic.palette,
+                        Palette::build_from_bytes(&[0x20, 0x30, 0x40, 0x50, 0x60, 0]).unwrap()
+                    );
+                } else {
+                    assert_eq!(graphic.payload, [1, 0]);
+                    assert_eq!(
+                        graphic.palette,
+                        Palette::build_from_bytes(&[1, 0x10, 0x20, 0x30, 0x40, 0x50]).unwrap()
+                    );
+                }
                 assert_eq!(
                     Graphic::strict_build_from_bytes(&info, &bytes, &[]),
                     Err(BuildError::InvalidValue {

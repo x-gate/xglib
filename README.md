@@ -67,7 +67,7 @@ assert_eq!(palette.colors[1].red, 0x30);
 
 `GraphicInfo` 必須傳入恰好 40 bytes，`AnimeInfo` 恰好 12 bytes。`Graphic` / `Anime` 接收單筆資料切片，不會自行根據 `addr` 尋址。研究外部 CGP 圖像時優先用 `Graphic::strict_build_from_cgp`；`Graphic::build_from_cgp` 保留原有的截尾 / 補零行為。raw BGR 使用原本的 `*_build_from_bytes` 入口。
 
-`Graphic` 第三個參數是原始 BGR 色表，**不會自動呼叫 `Palette::build_from_cgp`**。直接傳入 `.cgp` 可能成功返回卻產生錯誤色表，應改用新增的 `Graphic::build_from_cgp` / `strict_build_from_cgp`。兩者皆接受 672 或 708 bytes，並檢查像素索引界限；version ≥ 2 仍優先使用內嵌色表。完整切片範例與 WASM 限制見 [API 與架構](docs/architecture-api.md)。
+`Graphic` 第三個參數是原始 BGR 色表，**不會自動呼叫 `Palette::build_from_cgp`**。直接傳入 `.cgp` 可能成功返回卻產生錯誤色表，應改用新增的 `Graphic::build_from_cgp` / `strict_build_from_cgp`。兩者皆接受 672 或 708 bytes，並檢查像素索引界限；version ≥ 2 的非空內嵌色表仍優先，空色表回退外部色表。完整切片範例與 WASM 限制見 [API 與架構](docs/architecture-api.md)。
 
 ## 重跑本機資源驗證
 
@@ -101,3 +101,7 @@ python3 -B -m unittest discover -s tests -p 'test_*.py'
 ## 明確指定動畫 header layout
 
 2026-09-14 新增 `Anime::build_from_bytes_with_header_size` 與對應 WASM 入口，讓採用 xgtool 容器流程的使用端明確指定整段 12 / 20-byte header。既有逐動作偵測 API 維持相容；詳見 [layout 相容性說明](docs/animation-layout.md)。
+
+## CGTool 相容性基準
+
+2026-09-14 依 CGTool 修正固定色 4/5、空內嵌色表繼承、色表切分、有效壓縮 DataLen 邊界，以及 RLE 長指令範圍。動作逐筆 header 偵測沿用原入口；已取代 rsc-manager 先前的 xgtool 預設。完整依據、相容性與未涵蓋範圍見 [CGTool 對照](docs/cgtool-audit.md)。兩個 viewer 更新後皆須重建 WASM。

@@ -70,7 +70,7 @@ fn parse_graphic_at(
 
 新使用端直接傳入 `.cgp` bytes 至 `Graphic::build_from_cgp` 或 `Graphic::strict_build_from_cgp`。支援 672 有效 bytes 與完整 708-byte 檔案。`CGP_SIZE` / `cgp_size()` 保持 672；`CGP_FILE_SIZE` / `cgp_file_size()` 提供 708。
 
-version ≥ 2 在所有入口都使用內嵌色表，忽略外部參數；因此 CGP builder 在此情況下不要求有效外部 CGP。新入口會檢查輸出像素索引界限，包括內嵌色表。原有 raw BGR 入口仍保持原始行為。
+version ≥ 2 且色表非空時使用內嵌色表，忽略外部參數；空內嵌色表回退相應外部 builder；因此 CGP builder 在此情況下不要求有效外部 CGP。新入口會檢查輸出像素索引界限，包括內嵌色表。原有 raw BGR 入口仍保持原始行為。
 
 `payload` 是 palette index 的向量，不是 RGBA。CGP 一般入口仍會截尾 / 補零；研究或驗證用途選 strict，明確處理錯誤，不以補零掩蓋來源異常。
 
@@ -113,3 +113,7 @@ Rust 範例維持單一 Assets 參數的 base 預設行為；亦可指定四個 
 ## 2026-09-14：明確指定整段動畫 header 長度
 
 新增 `Anime::build_from_bytes_with_header_size(info_bytes, data_bytes, header_size)` 與 WASM 同名 snake-case 入口 `anime_build_from_bytes_with_header_size`；`header_size` 只接受 12 或 20。用於按照容器起點判定一次 layout 的使用端，避免後續 frame offsets 被誤認為 sentinel。舊入口保持逐動作自動判斷；輸出 Anime 結構與 strict 完整切片要求不變。來源、合成回歸案例與 rsc-manager 整合方式見 [明確動畫 layout](animation-layout.md)。
+
+## 2026-09-14 CGTool 對照修正
+
+以 [CGTool 對照](cgtool-audit.md) 為最新依據。RLE 長 literal 的範圍為 0x20–0x7f（高位取 flag % 0x20）、repeat 為 0xa0–0xbf、zero 為 0xe0–0xff，高位均為 5 bits。前述較窄的指令表與 InvalidFlag 描述為原匯入版本；現在所有 flag byte 都有定義，但截斷仍拒絕。CGP 固定 index 4/5 已校正，version 2/3 空色表繼承外部；完整 palette/API 差異與顯示端責任見對照文件。

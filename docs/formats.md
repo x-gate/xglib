@@ -36,17 +36,17 @@
 | 3 | 1 | `u8` | `graphic_type` | 保存，不解釋或驗證 |
 | 4 | 4 | `i32` | `width` | 保存；library 不與 info.width 比對 |
 | 8 | 4 | `i32` | `height` | 保存；library 不與 info.height 比對 |
-| 12 | 4 | `i32` | `data_len` | 保存；library 不依它裁切或驗證 |
+| 12 | 4 | `i32` | `data_len` | 保存；壓縮且值落在有效 record 範圍時依它界定 stream |
 | 16 | 4（僅 version ≥ 2） | `u32` | 區域變數 `palette_size` | 解碼後尾端色表的 **byte 數**，不儲存於 `GraphicHeader` |
 
 解碼流程：
 
 1. 解析 40-byte info 與 RD header，以 info 的 `width * height` 求預期像素數；負尺寸回傳錯誤。
 2. version 0 / 1 從 offset 16 取到呼叫端傳入切片的結尾。version ≥ 2 從 offset 20 取到結尾。
-3. `version & 1 == 1` 時 RLE 解碼；否則直接複製 bytes。
-4. version ≥ 2 從解碼結果末尾分出 `palette_size` bytes，前段為像素；色表長度不得超過解碼結果。
+3. `version & 1 == 1` 時依有效 DataLen 取 RLE stream；未指定或不一致的 DataLen 保留全切片，否則直接複製 bytes。
+4. version ≥ 2 色表從 `info.width * info.height` 之後開始；strict 驗證完整 pixels + palette 長度，寬鬆模式先正規化完整 stream 再切分。
 5. strict 模式要求像素長度等於 `info.width * info.height`；一般模式多則截尾、少則以 0 補滿。
-6. `*_build_from_bytes` 保留原始 BGR 契約。新增 `build_from_cgp` / `strict_build_from_cgp` 在 version < 2 呼叫 `Palette::build_from_cgp`；version ≥ 2 在所有入口皆使用內嵌原始 BGR 色表。CGP 圖像入口額外檢查像素索引不超出色表，其他行為相同。
+6. `*_build_from_bytes` 保留原始 BGR 契約。新增 `build_from_cgp` / `strict_build_from_cgp` 在 version < 2 呼叫 `Palette::build_from_cgp`；version ≥ 2 的非空內嵌色表使用原始 BGR；空色表回退外部 builder。CGP 圖像入口額外檢查像素索引不超出色表，其他行為相同。
 
 | version | 現有實作的解讀 | base / Ex 真實樣本 |
 | --- | --- | --- |
@@ -171,3 +171,7 @@ encoder 單一命令上限 `0x0F_FFFF`，更長的 run 分段。長度 ≤ 15 �
 ## Ex 樣本覆蓋補充
 
 `GraphicInfoEx_5` / `GraphicEx_5` 的 343,875 筆沿用同一圖像布局，無 version ≥ 2。`AnimeInfoEx_1.Bin` / `AnimeEx_1.Bin` 的 827 筆皆可依 12-byte 索引及標準動畫 header 完整解析；沒有延伸 header 的真實樣本證據。檔名中的 Ex 不等於解析器的 Extended header。102 筆圖像在 strict 模式有多 1 byte 的異常，詳見 [Ex 驗證報告](validation-ex.md)。
+
+## 2026-09-14 CGTool 對照修正
+
+以 [CGTool 對照](cgtool-audit.md) 為最新依據。RLE 長 literal 的範圍為 0x20–0x7f（高位取 flag % 0x20）、repeat 為 0xa0–0xbf、zero 為 0xe0–0xff，高位均為 5 bits。前述較窄的指令表與 InvalidFlag 描述為原匯入版本；現在所有 flag byte 都有定義，但截斷仍拒絕。CGP 固定 index 4/5 已校正，version 2/3 空色表繼承外部；完整 palette/API 差異與顯示端責任見對照文件。

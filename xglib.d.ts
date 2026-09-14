@@ -139,7 +139,7 @@ export function graphic_strict_build_from_bytes(
   palette_bytes: Uint8Array,
 ): Graphic;
 
-/** Versions 0/1 use CGP; versions >= 2 use their embedded palette. */
+/** Uses CGP unless a version >= 2 record supplies a non-empty embedded palette. */
 export function graphic_build_from_cgp(
   info_bytes: Uint8Array,
   data_bytes: Uint8Array,

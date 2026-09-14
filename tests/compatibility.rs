@@ -194,3 +194,57 @@ fn external_graphic_rejects_invalid_cgp_in_both_modes() {
         assert!(Graphic::strict_build_from_cgp(&info, &data, &bytes).is_err());
     }
 }
+
+#[test]
+fn cgtool_fixed_prefix_distinguishes_magenta_and_blue() {
+    let palette = Palette::build_from_cgp(&cgp()).unwrap();
+    assert_eq!(palette.colors[4], palette::Srgba::new(128, 0, 128, 255));
+    assert_eq!(palette.colors[5], palette::Srgba::new(0, 0, 128, 255));
+}
+
+#[test]
+fn empty_embedded_palettes_inherit_the_explicit_external_palette() {
+    for version in [2, 3] {
+        let (info, data) = graphic(version, 2, 1, &[0, 249], &[]);
+        let parsed = Graphic::strict_build_from_cgp(&info, &data, &cgp()).unwrap();
+        assert_eq!(parsed.palette, Palette::build_from_cgp(&cgp()).unwrap());
+        assert!(Graphic::strict_build_from_cgp(&info, &data, &[]).is_err());
+        let (info, data) = graphic(version, 1, 1, &[1], &[]);
+        let raw = [0, 0, 0, 3, 2, 1];
+        let parsed = Graphic::strict_build_from_bytes(&info, &data, &raw).unwrap();
+        assert_eq!(parsed.palette, Palette::build_from_bytes(&raw).unwrap());
+    }
+}
+
+#[test]
+fn lenient_embedded_palette_starts_after_the_expected_pixels_not_at_the_tail() {
+    for version in [2, 3] {
+        // One extra byte after the actual palette must not shift its BGR triples.
+        let (info, data) = graphic(version, 1, 1, &[1, 0], &[0, 0, 3, 2, 1, 99]);
+        assert!(Graphic::strict_build_from_bytes(&info, &data, &[]).is_err());
+        let parsed = Graphic::build_from_bytes(&info, &data, &[]).unwrap();
+        assert_eq!(parsed.payload, [1]);
+        assert_eq!(parsed.palette.colors[1], palette::Srgba::new(1, 2, 3, 255));
+    }
+}
+
+#[test]
+fn compressed_rd_length_excludes_container_bytes_after_the_stream() {
+    for version in [1, 3] {
+        let (mut info, mut data) = graphic(
+            version,
+            1,
+            1,
+            &[1],
+            if version == 3 {
+                &[0, 0, 0, 3, 2, 1]
+            } else {
+                &[]
+            },
+        );
+        data.extend_from_slice(&[0x01, 99]);
+        info[8..12].copy_from_slice(&(data.len() as i32).to_le_bytes());
+        let parsed = Graphic::strict_build_from_cgp(&info, &data, &cgp()).unwrap();
+        assert_eq!(parsed.payload, [1]);
+    }
+}
